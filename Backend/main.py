@@ -1,7 +1,21 @@
 from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+import traceback
 from database import engine
+from routers import auth
 
 app = FastAPI()
+
+@app.middleware("http")
+async def catch_exceptions(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+app.include_router(auth.router)
 
 @app.on_event("startup")
 def startup():
@@ -14,4 +28,3 @@ def startup():
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
