@@ -37,4 +37,8 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
     
     token = crear_token({"sub": str(usuario.id_usuario), "email": usuario.email})
     
-    return LoginResponse(access_token=token)
+    return LoginResponse(
+        access_token=token,
+        token_type="bearer",
+        nombre=usuario.nombre
+    )
