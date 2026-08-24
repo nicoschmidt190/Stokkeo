@@ -4,8 +4,10 @@ from fastapi.responses import JSONResponse
 import traceback
 from database import engine
 from routers import auth
+from routers import auth, categorias
 
 app = FastAPI()
+app.include_router(categorias.router)
 
 # 1. Configuración de CORS (debe ir antes de los routers y otros middlewares)
 app.add_middleware(

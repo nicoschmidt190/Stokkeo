@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import Categorias from './pages/Categorias'
 
 function RutaProtegida({ children }) {
   const { usuario, cargando } = useAuth()
@@ -13,14 +14,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route
-        path="/dashboard"
-        element={
-          <RutaProtegida>
-            <Dashboard />
-          </RutaProtegida>
-        }
-      />
+      <Route path="/dashboard" element={<RutaProtegida><Dashboard /></RutaProtegida>} />
+      <Route path="/categorias" element={<RutaProtegida><Categorias /></RutaProtegida>} />
       <Route path="*" element={<Navigate to="/login" />} />
     </Routes>
   )
