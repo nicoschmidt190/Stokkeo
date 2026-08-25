@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Categorias from './pages/Categorias'
+import Productos from './pages/Productos'
 
 function RutaProtegida({ children }) {
   const { usuario, cargando } = useAuth()
@@ -16,6 +17,7 @@ function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/dashboard" element={<RutaProtegida><Dashboard /></RutaProtegida>} />
       <Route path="/categorias" element={<RutaProtegida><Categorias /></RutaProtegida>} />
+      <Route path="/productos" element={<RutaProtegida><Productos /></RutaProtegida>} />
       <Route path="*" element={<Navigate to="/login" />} />
     </Routes>
   )

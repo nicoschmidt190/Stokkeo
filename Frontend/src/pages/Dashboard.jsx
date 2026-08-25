@@ -48,12 +48,12 @@ export default function Dashboard() {
         {/* Placeholder módulos */}
 <div className="grid grid-cols-3 gap-4">
   {[
-    { nombre: 'Categorías', ruta: '/categorias' },
-    { nombre: 'Productos', ruta: '/productos' },
-    { nombre: 'Stock', ruta: '/stock' },
-    { nombre: 'Movimientos', ruta: '/movimientos' },
-    { nombre: 'Venta rápida', ruta: '/venta-rapida' },
-    { nombre: 'Dashboard', ruta: '/dashboard' },
+    { nombre: 'Categorías', descripcion: 'Gestionar categorías', ruta: '/categorias' },
+    { nombre: 'Productos', descripcion: 'Gestión de productos', ruta: '/productos' },
+    { nombre: 'Stock', descripcion: 'En construcción', ruta: '/stock' },
+    { nombre: 'Movimientos', descripcion: 'En construcción', ruta: '/movimientos' },
+    { nombre: 'Venta rápida', descripcion: 'En construcción', ruta: '/venta-rapida' },
+    { nombre: 'Dashboard', descripcion: 'En construcción', ruta: '/dashboard' },
   ].map(m => (
     <div key={m.nombre}
       onClick={() => navigate(m.ruta)}
@@ -63,7 +63,7 @@ export default function Dashboard() {
         style={{ background: 'linear-gradient(135deg, #00c6ff22, #39ff1422)', border: '1px solid rgba(57,255,20,0.2)' }} />
       <h3 className="text-white font-medium">{m.nombre}</h3>
       <p className="text-xs mt-1" style={{ color: '#6b7280' }}>
-        {m.nombre === 'Categorías' ? 'Gestionar categorías' : 'En construcción'}
+        {m.descripcion}
       </p>
     </div>
   ))}
