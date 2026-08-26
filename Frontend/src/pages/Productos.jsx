@@ -10,6 +10,11 @@ export default function Productos() {
   const [productos, setProductos] = useState([])
   const [categorias, setCategorias] = useState([])
   const [editando, setEditando] = useState(null)
+  
+  // Estados para filtros
+  const [busqueda, setBusqueda] = useState('')
+  const [categoriaFiltro, setCategoriaFiltro] = useState('')
+
   const [form, setForm] = useState({
     nombre: '',
     precioCosto: '',
@@ -37,6 +42,23 @@ export default function Productos() {
   }
 
   useEffect(() => { cargarDatos() }, [])
+
+  // --- LÓGICA DE FILTRADO COMBINADO ---
+  const productosFiltrados = productos.filter((p) => {
+    const textoLimpio = busqueda.trim().toLowerCase()
+
+    // 1. Condición de búsqueda: solo filtra si tiene 3 o más caracteres
+    const cumpleBusqueda = textoLimpio.length >= 3
+      ? p.nombre.toLowerCase().includes(textoLimpio)
+      : true
+
+    // 2. Condición de categoría: si hay una categoría seleccionada en el filtro
+    const cumpleCategoria = categoriaFiltro
+      ? p.id_categoria === parseInt(categoriaFiltro)
+      : true
+
+    return cumpleBusqueda && cumpleCategoria
+  })
 
   const handleLogout = () => { logout(); navigate('/login') }
 
@@ -81,7 +103,6 @@ export default function Productos() {
         return
       }
 
-      // Actualizar el estado inmediatamente para quitarlo de la tabla
       setProductos((prev) => prev.filter((p) => p.id_producto !== id_producto))
       setError('')
     } catch {
@@ -234,7 +255,7 @@ export default function Productos() {
             <div className="md:col-span-2 mt-2 flex gap-3">
               <button type="submit" disabled={cargando}
                 className="px-5 py-2.5 rounded-lg text-sm font-medium"
-                style={{ background: 'linear-gradient(135deg, #10b981, #059669)', color: '#ffffff' }}>
+                style={{ background: 'linear-gradient(135deg, #00c6ff, #39ff14)', color: '#0a0a0f' }}>
                 {cargando ? 'Guardando...' : editando ? 'Guardar cambios' : 'Guardar Producto'}
               </button>
               {editando && (
@@ -248,10 +269,40 @@ export default function Productos() {
           </form>
         </div>
 
-        {/* Listado */}
+        {/* Listado con Filtros */}
         <div className="rounded-xl p-6"
           style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <h3 className="text-lg font-medium text-white mb-4">Listado de Productos</h3>
+          
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+            <h3 className="text-lg font-medium text-white">Listado de Productos</h3>
+            
+            {/* BARRA DE BÚSQUEDA Y FILTRO */}
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                placeholder="Buscar por nombre (mín. 3 letras)..."
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                className="px-3 py-1.5 rounded-lg text-sm text-white focus:outline-none"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '220px' }}
+              />
+
+              <select
+                value={categoriaFiltro}
+                onChange={(e) => setCategoriaFiltro(e.target.value)}
+                className="px-3 py-1.5 rounded-lg text-sm text-white focus:outline-none"
+                style={{ background: '#121218', border: '1px solid rgba(255,255,255,0.1)' }}
+              >
+                <option value="">Todas las categorías</option>
+                {categorias.map((cat) => (
+                  <option key={cat.id_categoria} value={cat.id_categoria}>
+                    {cat.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm" style={{ color: '#d1d5db' }}>
               <thead>
@@ -265,14 +316,16 @@ export default function Productos() {
                 </tr>
               </thead>
               <tbody>
-                {productos.length === 0 ? (
+                {productosFiltrados.length === 0 ? (
                   <tr>
                     <td colSpan="6" className="py-6 text-center text-xs" style={{ color: '#6b7280' }}>
-                      No hay productos registrados.
+                      {productos.length === 0
+                        ? 'No hay productos registrados.'
+                        : 'No se encontraron productos que coincidan con la búsqueda.'}
                     </td>
                   </tr>
                 ) : (
-                  productos.map((p) => (
+                  productosFiltrados.map((p) => (
                     <tr key={p.id_producto}
                       style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                       <td className="py-3 px-3 font-medium text-white">{p.nombre}</td>
@@ -280,7 +333,7 @@ export default function Productos() {
                       <td className="py-3 px-3">${Number(p.precioCosto).toFixed(2)}</td>
                       <td className="py-3 px-3">{p.stock_minimo}</td>
                       <td className="py-3 px-3" style={{ color: '#6b7280' }}>{p.codigo_barras || '-'}</td>
-                      <td className="py-3 px-3">
+                      <td className="py-3 px-3 flex gap-2">
                         <button onClick={() => handleEditar(p)}
                           className="text-xs px-3 py-1 rounded-lg"
                           style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#9ca3af' }}>
