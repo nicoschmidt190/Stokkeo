@@ -13,6 +13,7 @@ export default function Productos() {
   
   // Estados para filtros
   const [busqueda, setBusqueda] = useState('')
+  const [mensajeExito, setMensajeExito] = useState('')
   const [categoriaFiltro, setCategoriaFiltro] = useState('')
 
   const [form, setForm] = useState({
@@ -86,26 +87,41 @@ export default function Productos() {
     setError('')
   }
 
-  const handleEliminar = async (id_producto) => {
-    const confirmar = window.confirm('¿Estás seguro de que querés eliminar este producto? Se eliminarán también sus precios competidores y stock.')
+  const handleEliminar = async (producto) => {
+    const confirmar = window.confirm(`¿Estás seguro de que querés eliminar "${producto.nombre}"? Se eliminarán también sus precios competidores y stock.`)
     
     if (!confirmar) return
 
     try {
-      const res = await fetch(`${API_URL}/productos/${id_producto}`, {
+      const res = await fetch(`${API_URL}/productos/${producto.id_producto}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
+        headers: token? { Authorization: `Bearer ${token}` } : {},
       })
 
       if (!res.ok) {
-        const data = await res.json()
-        setError(data.detail || 'Ocurrió un error al eliminar el producto')
+        let detalleError = 'Ocurrió un error al eliminar el producto'
+        try {
+          const data = await res.json()
+          if (data?.detail) detalleError = data.detail
+        } catch {
+          // Si no hay cuerpo JSON en el error, mantiene el mensaje por defecto
+        }
+        setError(detalleError)
         return
       }
 
-      setProductos((prev) => prev.filter((p) => p.id_producto !== id_producto))
+      // Actualizar lista
+      setProductos((prev) => prev.filter((p) => p.id_producto !== producto.id_producto))
       setError('')
-    } catch {
+
+      //Mensaje de exito temporal
+      setMensajeExito(`"${producto.nombre}" eliminado correctamente`)
+      setTimeout(() => {
+        setMensajeExito('')
+      }, 4000)
+
+    } catch (err) {
+      console.error('Error al eliminar:', err)
       setError('Sin conexión al intentar eliminar el producto.')
     }
   }
@@ -339,7 +355,7 @@ export default function Productos() {
                           style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#9ca3af' }}>
                           Editar
                         </button>
-                        <button onClick={() => handleEliminar(p.id_producto)}
+                        <button onClick={() => handleEliminar(p)}
                           className="text-xs px-3 py-1 rounded-lg transition-colors"
                           style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171' }}>
                           Eliminar
