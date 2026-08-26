@@ -210,6 +210,26 @@ export default function Productos() {
       <main className="p-8 max-w-4xl mx-auto">
         <h2 className="text-2xl font-semibold text-white mb-6">Productos</h2>
 
+        {/* Bloque para leer y mostrar el mensaje */}
+        {mensajeExito && (
+          <div
+            className="mb-6 text-xs px-4 py-3 rounded-lg flex items-center justify-between transition-all"
+            style={{
+              background: 'rgba(16, 185, 129, 0.1)',
+              border: '1px solid rgba(16, 185, 129, 0.25)',
+              color: '#34d399',
+            }}
+          >
+            <span>✓ {mensajeExito}</span>
+            <button
+              onClick={() => setMensajeExito('')}
+              className="text-xs hover:opacity-75 ml-2 text-emerald-400"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Formulario */}
         <div className="rounded-xl p-6 mb-8"
           style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
