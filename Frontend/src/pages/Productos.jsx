@@ -64,6 +64,31 @@ export default function Productos() {
     setError('')
   }
 
+  const handleEliminar = async (id_producto) => {
+    const confirmar = window.confirm('¿Estás seguro de que querés eliminar este producto? Se eliminarán también sus precios competidores y stock.')
+    
+    if (!confirmar) return
+
+    try {
+      const res = await fetch(`${API_URL}/productos/${id_producto}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        setError(data.detail || 'Ocurrió un error al eliminar el producto')
+        return
+      }
+
+      // Actualizar el estado inmediatamente para quitarlo de la tabla
+      setProductos((prev) => prev.filter((p) => p.id_producto !== id_producto))
+      setError('')
+    } catch {
+      setError('Sin conexión al intentar eliminar el producto.')
+    }
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
 
@@ -260,6 +285,11 @@ export default function Productos() {
                           className="text-xs px-3 py-1 rounded-lg"
                           style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#9ca3af' }}>
                           Editar
+                        </button>
+                        <button onClick={() => handleEliminar(p.id_producto)}
+                          className="text-xs px-3 py-1 rounded-lg transition-colors"
+                          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171' }}>
+                          Eliminar
                         </button>
                       </td>
                     </tr>

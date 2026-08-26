@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from typing import List
 from database import get_db
 from models.producto import Producto, Stock
+#, PrecioCompetidor (agregar cuando este el modulo terminado)
 from models.categoria import Categoria
 from schemas.producto import ProductoCreate, ProductoResponse
 
@@ -77,3 +78,21 @@ def editar_producto(id_producto: int, producto_in: ProductoCreate, db: Session =
     db.commit()
     db.refresh(producto)
     return producto
+
+@router.delete("/{id_producto}", status_code=status.HTTP_204_NO_CONTENT)
+def eliminar_producto(id_producto: int, db: Session = Depends(get_db)):
+    producto = db.query(Producto).filter(Producto.id_producto == id_producto).first()
+    if not producto:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado")
+
+    # 1. Eliminar precios competidores asociados (Agregar cuando este el modulo terminado)
+    # db.query(PrecioCompetidor).filter(PrecioCompetidor.id_producto == id_producto).delete()
+
+    # 2. Eliminar stock asociado
+    db.query(Stock).filter(Stock.id_producto == id_producto).delete()
+
+    # 3. Eliminar el producto
+    db.delete(producto)
+    db.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
