@@ -49,3 +49,31 @@ def crear_producto(producto_in: ProductoCreate, db: Session = Depends(get_db)):
     db.commit()
 
     return nuevo_prod
+
+@router.put("/{id_producto}", response_model=ProductoResponse)
+def editar_producto(id_producto: int, producto_in: ProductoCreate, db: Session = Depends(get_db)):
+    producto = db.query(Producto).filter(Producto.id_producto == id_producto).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    nombre_limpio = producto_in.nombre.strip()
+    existe = db.query(Producto).filter(
+        Producto.nombre.ilike(nombre_limpio),
+        Producto.id_producto != id_producto
+    ).first()
+    if existe:
+        raise HTTPException(status_code=400, detail="Ya existe un producto con ese nombre")
+
+    cat_existe = db.query(Categoria).filter(Categoria.id_categoria == producto_in.id_categoria).first()
+    if not cat_existe:
+        raise HTTPException(status_code=400, detail="La categoría seleccionada no existe")
+
+    producto.nombre = nombre_limpio
+    producto.precioCosto = producto_in.precioCosto
+    producto.stock_minimo = producto_in.stock_minimo
+    producto.codigo_barras = producto_in.codigo_barras.strip() if producto_in.codigo_barras else None
+    producto.id_categoria = producto_in.id_categoria
+
+    db.commit()
+    db.refresh(producto)
+    return producto
