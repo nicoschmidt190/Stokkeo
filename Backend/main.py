@@ -3,10 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import traceback
 from database import engine
-from routers import auth
-from routers import auth, categorias
-from routers import auth, categorias, productos, movimientos
-from routers import stock
+from routers import auth, categorias, productos, stock, movimientos
+
 
 
 app = FastAPI()
