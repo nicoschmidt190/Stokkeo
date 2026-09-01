@@ -51,7 +51,7 @@ export default function Dashboard() {
     { nombre: 'Categorías', descripcion: 'Gestionar categorías', ruta: '/categorias' },
     { nombre: 'Productos', descripcion: 'Gestiar productos', ruta: '/productos' },
     { nombre: 'Stock', descripcion: 'Gestionar stock', ruta: '/stock' },
-    { nombre: 'Movimientos', descripcion: 'En construcción', ruta: '/movimientos' },
+    { nombre: 'Movimientos', descripcion: 'Gestionar movimientos', ruta: '/movimientos' },
     { nombre: 'Venta rápida', descripcion: 'En construcción', ruta: '/venta-rapida' },
     { nombre: 'Dashboard', descripcion: 'En construcción', ruta: '/dashboard' },
   ].map(m => (

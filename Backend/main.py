@@ -5,7 +5,7 @@ import traceback
 from database import engine
 from routers import auth
 from routers import auth, categorias
-from routers import auth, categorias, productos
+from routers import auth, categorias, productos, movimientos
 from routers import stock
 
 
@@ -13,6 +13,7 @@ app = FastAPI()
 app.include_router(categorias.router)
 app.include_router(productos.router)
 app.include_router(stock.router)
+app.include_router(movimientos.router)
 
 
 

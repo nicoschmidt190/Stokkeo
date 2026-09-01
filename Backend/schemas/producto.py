@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional
+from decimal import Decimal
 
 class ProductoCreate(BaseModel):
     nombre: str = Field(..., min_length=1)
@@ -34,4 +35,30 @@ class StockResponse(BaseModel):
     cantidad: int
     stock_minimo: int
     estado: str  # "ok" | "bajo" | "sin_stock"
+
+class StockSimple(BaseModel):
+    cantidad: int
+
+    class Config:
+        from_attributes = True
+
+class CategoriaSimple(BaseModel):
+    id_categoria: int
+    nombre: str
+
+    class Config:
+        from_attributes = True
+
+class ProductoResponse(BaseModel):
+    id_producto: int
+    nombre: str
+    precioCosto: Decimal
+    stock_minimo: int
+    codigo_barras: Optional[str] = None
+    id_categoria: int
+    categoria: Optional[CategoriaSimple] = None
+    stock: Optional[StockSimple] = None
+
+    class Config:
+        from_attributes = True
     
