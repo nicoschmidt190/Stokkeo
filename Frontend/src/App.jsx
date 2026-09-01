@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Categorias from './pages/Categorias'
 import Productos from './pages/Productos'
+import Stock from './pages/Stock'
 
 function RutaProtegida({ children }) {
   const { usuario, cargando } = useAuth()
@@ -18,6 +19,7 @@ function AppRoutes() {
       <Route path="/dashboard" element={<RutaProtegida><Dashboard /></RutaProtegida>} />
       <Route path="/categorias" element={<RutaProtegida><Categorias /></RutaProtegida>} />
       <Route path="/productos" element={<RutaProtegida><Productos /></RutaProtegida>} />
+      <Route path="/stock" element={<RutaProtegida><Stock /></RutaProtegida>} />
       <Route path="*" element={<Navigate to="/login" />} />
     </Routes>
   )

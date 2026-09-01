@@ -26,3 +26,12 @@ class ProductoResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class StockResponse(BaseModel):
+    id_producto: int
+    nombre: str
+    categoria: Optional[CategoriaNested] = None
+    cantidad: int
+    stock_minimo: int
+    estado: str  # "ok" | "bajo" | "sin_stock"
+    

@@ -6,11 +6,15 @@ from database import engine
 from routers import auth
 from routers import auth, categorias
 from routers import auth, categorias, productos
+from routers import stock
 
 
 app = FastAPI()
 app.include_router(categorias.router)
 app.include_router(productos.router)
+app.include_router(stock.router)
+
+
 
 # 1. Configuración de CORS (debe ir antes de los routers y otros middlewares)
 app.add_middleware(

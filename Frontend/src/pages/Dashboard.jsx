@@ -49,8 +49,8 @@ export default function Dashboard() {
 <div className="grid grid-cols-3 gap-4">
   {[
     { nombre: 'Categorías', descripcion: 'Gestionar categorías', ruta: '/categorias' },
-    { nombre: 'Productos', descripcion: 'Gestión de productos', ruta: '/productos' },
-    { nombre: 'Stock', descripcion: 'En construcción', ruta: '/stock' },
+    { nombre: 'Productos', descripcion: 'Gestiar productos', ruta: '/productos' },
+    { nombre: 'Stock', descripcion: 'Gestionar stock', ruta: '/stock' },
     { nombre: 'Movimientos', descripcion: 'En construcción', ruta: '/movimientos' },
     { nombre: 'Venta rápida', descripcion: 'En construcción', ruta: '/venta-rapida' },
     { nombre: 'Dashboard', descripcion: 'En construcción', ruta: '/dashboard' },
