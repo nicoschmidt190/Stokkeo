@@ -11,7 +11,7 @@ export default function Movimientos() {
   const [productos, setProductos] = useState([])
   const [movimientos, setMovimientos] = useState([])
   const [busquedaRapida, setBusquedaRapida] = useState('')
-  
+
   const [form, setForm] = useState({
     id_producto: '',
     cantidad: '',
@@ -32,7 +32,6 @@ export default function Movimientos() {
         fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
         fetch(`${API_URL}/movimientos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
       ])
-
       if (resProd.ok) {
         const dataProd = await resProd.json()
         if (Array.isArray(dataProd)) setProductos(dataProd)
@@ -47,48 +46,30 @@ export default function Movimientos() {
     }
   }
 
-  useEffect(() => {
-    cargarDatos()
-  }, [])
+  useEffect(() => { cargarDatos() }, [])
 
-  const handleLogout = () => {
-    logout()
-    navigate('/login')
-  }
+  const handleLogout = () => { logout(); navigate('/login') }
 
-  // Producto actualmente seleccionado
   const productoSeleccionado = productos.find(
     (p) => p.id_producto === parseInt(form.id_producto)
   )
-
   const stockActual = productoSeleccionado?.stock?.cantidad ?? 0
 
-  // Detección de Código de Barras o búsqueda por texto
   const handleBusquedaRapida = (valor) => {
     setBusquedaRapida(valor)
     const valLimpio = valor.trim().toLowerCase()
     if (!valLimpio) return
 
-    // 1. Coincidencia exacta por código de barras
     const matchBarcode = productos.find((p) => p.codigo_barras && p.codigo_barras.trim().toLowerCase() === valLimpio)
     if (matchBarcode) {
-      setForm((prev) => ({
-        ...prev,
-        id_producto: matchBarcode.id_producto.toString(),
-        origen: 'Scanner',
-      }))
+      setForm((prev) => ({ ...prev, id_producto: matchBarcode.id_producto.toString(), origen: 'Scanner' }))
       setError('')
       return
     }
 
-    // 2. Coincidencia por nombre
     const matchNombre = productos.find((p) => p.nombre.toLowerCase().includes(valLimpio))
     if (matchNombre) {
-      setForm((prev) => ({
-        ...prev,
-        id_producto: matchNombre.id_producto.toString(),
-        origen: 'Manual',
-      }))
+      setForm((prev) => ({ ...prev, id_producto: matchNombre.id_producto.toString(), origen: 'Manual' }))
       setError('')
     }
   }
@@ -121,6 +102,11 @@ export default function Movimientos() {
     setError('')
   }
 
+  const cambiarTipo = (tipo) => {
+    setForm((prev) => ({ ...prev, tipo }))
+    setError('')
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
 
@@ -131,7 +117,13 @@ export default function Movimientos() {
 
     const cant = parseInt(form.cantidad)
     if (!form.cantidad || isNaN(cant) || cant <= 0) {
-      setError('La cantidad a ingresar debe ser un número entero mayor a 0')
+      setError('La cantidad debe ser un número entero mayor a 0')
+      return
+    }
+
+    // Validación de salida: no permitir retirar más de lo disponible
+    if (form.tipo === 'Salida' && cant > stockActual) {
+      setError(`No podés retirar ${cant} unidades: el stock disponible es de ${stockActual}`)
       return
     }
 
@@ -161,27 +153,32 @@ export default function Movimientos() {
         return
       }
 
-      // Actualizar listado de movimientos y recargar productos para actualizar stock en memoria
+      const nuevoTotal = form.tipo === 'Entrada' ? stockActual + cant : stockActual - cant
+
       setMovimientos((prev) => [data, ...prev])
       setProductos((prev) =>
         prev.map((p) => {
           if (p.id_producto === parseInt(form.id_producto)) {
-            const cantPrevia = p.stock?.cantidad ?? 0
-            return {
-              ...p,
-              stock: { ...p.stock, cantidad: cantPrevia + cant },
-            }
+            return { ...p, stock: { ...p.stock, cantidad: nuevoTotal } }
           }
           return p
         })
       )
 
-      setMensajeExito(
-        `Se sumaron ${cant} unidades al stock de "${productoSeleccionado?.nombre}". Stock actual: ${stockActual + cant}`
-      )
-      setTimeout(() => setMensajeExito(''), 4000)
+      const accion = form.tipo === 'Entrada' ? 'sumaron' : 'retiraron'
+      let mensaje = `Se ${accion} ${cant} unidades de "${productoSeleccionado?.nombre}". Stock actual: ${nuevoTotal}`
 
-      setForm({ id_producto: '', cantidad: '', tipo: 'Entrada', origen: 'Manual' })
+      // Alerta si la salida deja el stock en el mínimo o por debajo
+      if (form.tipo === 'Salida' && nuevoTotal <= (productoSeleccionado?.stock_minimo ?? 0)) {
+        mensaje += nuevoTotal === 0
+          ? ' — ⚠ El producto se quedó sin stock.'
+          : ' — ⚠ El producto llegó a su stock mínimo.'
+      }
+
+      setMensajeExito(mensaje)
+      setTimeout(() => setMensajeExito(''), 5000)
+
+      setForm({ id_producto: '', cantidad: '', tipo: form.tipo, origen: 'Manual' })
       setBusquedaRapida('')
       if (inputScannerRef.current) inputScannerRef.current.focus()
 
@@ -193,81 +190,50 @@ export default function Movimientos() {
     }
   }
 
+  const nuevoTotalPreview = form.cantidad && parseInt(form.cantidad) > 0
+    ? (form.tipo === 'Entrada' ? stockActual + parseInt(form.cantidad) : stockActual - parseInt(form.cantidad))
+    : null
+
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
-      {/* Navbar */}
-      <nav
-        style={{
-          background: 'rgba(255,255,255,0.03)',
-          borderBottom: '1px solid rgba(255,255,255,0.07)',
-        }}
-        className="px-6 py-4 flex items-center justify-between"
-      >
-        <div
-          className="flex items-center gap-3 cursor-pointer"
-          onClick={() => navigate('/dashboard')}
-        >
+      <nav style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+        className="px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/dashboard')}>
           <img src={logo} alt="Stokkeo" className="h-16" />
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-sm hidden sm:inline" style={{ color: '#6b7280' }}>
-            {usuario?.email}
-          </span>
-          <button
-            onClick={() => navigate('/dashboard')}
+          <span className="text-sm hidden sm:inline" style={{ color: '#6b7280' }}>{usuario?.email}</span>
+          <button onClick={() => navigate('/dashboard')}
             className="text-sm px-4 py-2 rounded-lg font-medium transition-colors"
-            style={{ color: '#9ca3af' }}
-          >
+            style={{ color: '#9ca3af' }}>
             Dashboard
           </button>
-          <button
-            onClick={handleLogout}
+          <button onClick={handleLogout}
             className="text-sm px-4 py-2 rounded-lg font-medium transition-all duration-200"
-            style={{
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: '#d1d5db',
-            }}
-          >
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#d1d5db' }}>
             Cerrar sesión
           </button>
         </div>
       </nav>
 
-      {/* Contenido Principal */}
       <main className="p-8 max-w-4xl mx-auto">
         <h2 className="text-2xl font-semibold text-white mb-6">Movimientos de Stock</h2>
 
-        {/* Mensaje de Éxito */}
         {mensajeExito && (
-          <div
-            className="mb-6 text-xs px-4 py-3 rounded-lg flex items-center justify-between transition-all"
-            style={{
-              background: 'rgba(16, 185, 129, 0.1)',
-              border: '1px solid rgba(16, 185, 129, 0.25)',
-              color: '#34d399',
-            }}
-          >
+          <div className="mb-6 text-xs px-4 py-3 rounded-lg flex items-center justify-between transition-all"
+            style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', color: '#34d399' }}>
             <span>✓ {mensajeExito}</span>
-            <button
-              onClick={() => setMensajeExito('')}
-              className="text-xs hover:opacity-75 ml-2 text-emerald-400"
-            >
-              ✕
-            </button>
+            <button onClick={() => setMensajeExito('')} className="text-xs hover:opacity-75 ml-2 text-emerald-400">✕</button>
           </div>
         )}
 
-        {/* Formulario de Entrada con Escáner y Selector */}
-        <div
-          className="rounded-xl p-6 mb-8"
-          style={{
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-          }}
-        >
+        <div className="rounded-xl p-6 mb-8"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-medium text-white">Ingreso de Mercadería</h3>
+            <h3 className="text-lg font-medium text-white">
+              {form.tipo === 'Entrada' ? 'Ingreso de Mercadería' : 'Salida de Mercadería'}
+            </h3>
             {form.origen === 'Scanner' && (
               <span className="text-xs px-2.5 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 font-medium">
                 ⚡ Modo Escáner
@@ -275,7 +241,28 @@ export default function Movimientos() {
             )}
           </div>
 
-          {/* Barra de escáner / Búsqueda predictiva */}
+          {/* Selector de tipo de movimiento */}
+          <div className="flex gap-2 mb-4">
+            <button type="button" onClick={() => cambiarTipo('Entrada')}
+              className="flex-1 text-sm py-2 rounded-lg font-medium transition-colors"
+              style={{
+                background: form.tipo === 'Entrada' ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.04)',
+                border: form.tipo === 'Entrada' ? '1px solid rgba(16,185,129,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                color: form.tipo === 'Entrada' ? '#34d399' : '#9ca3af',
+              }}>
+              Entrada
+            </button>
+            <button type="button" onClick={() => cambiarTipo('Salida')}
+              className="flex-1 text-sm py-2 rounded-lg font-medium transition-colors"
+              style={{
+                background: form.tipo === 'Salida' ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.04)',
+                border: form.tipo === 'Salida' ? '1px solid rgba(239,68,68,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                color: form.tipo === 'Salida' ? '#f87171' : '#9ca3af',
+              }}>
+              Salida
+            </button>
+          </div>
+
           <div className="mb-4">
             <label className="text-xs mb-1 block" style={{ color: '#9ca3af' }}>
               Escanear código de barras o escribir para autocompletar:
@@ -288,29 +275,19 @@ export default function Movimientos() {
               onChange={(e) => handleBusquedaRapida(e.target.value)}
               onKeyDown={handleKeyDownScanner}
               className="w-full px-3 py-2.5 rounded-lg text-sm text-white focus:outline-none"
-              style={{
-                background: 'rgba(255,255,255,0.07)',
-                border: '1px solid rgba(0, 198, 255, 0.4)',
-              }}
+              style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(0, 198, 255, 0.4)' }}
             />
           </div>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Selector manual desplegable */}
             <div className="flex flex-col gap-1">
               <label className="text-xs" style={{ color: '#9ca3af' }}>Seleccionar Producto *</label>
               <select
                 name="id_producto"
                 value={form.id_producto}
-                onChange={(e) => {
-                  handleChange(e)
-                  setForm((prev) => ({ ...prev, origen: 'Manual' }))
-                }}
+                onChange={(e) => { handleChange(e); setForm((prev) => ({ ...prev, origen: 'Manual' })) }}
                 className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
-                style={{
-                  background: '#121218',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                }}
+                style={{ background: '#121218', border: '1px solid rgba(255,255,255,0.1)' }}
               >
                 <option value="">-- Seleccionar de la lista --</option>
                 {productos.map((p) => (
@@ -321,33 +298,26 @@ export default function Movimientos() {
               </select>
             </div>
 
-            {/* Cantidad */}
             <div className="flex flex-col gap-1">
-              <label className="text-xs" style={{ color: '#9ca3af' }}>Cantidad a sumar *</label>
+              <label className="text-xs" style={{ color: '#9ca3af' }}>
+                Cantidad a {form.tipo === 'Entrada' ? 'sumar' : 'retirar'} *
+              </label>
               <input
                 type="number"
                 min="1"
+                max={form.tipo === 'Salida' ? stockActual : undefined}
                 name="cantidad"
                 placeholder="Ej: 10"
                 value={form.cantidad}
                 onChange={handleChange}
                 className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
-                style={{
-                  background: 'rgba(255,255,255,0.05)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                }}
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
               />
             </div>
 
-            {/* Card informativa del producto seleccionado */}
             {productoSeleccionado && (
-              <div
-                className="md:col-span-2 p-3 rounded-lg flex items-center justify-between text-xs"
-                style={{
-                  background: 'rgba(255,255,255,0.03)',
-                  border: '1px solid rgba(255,255,255,0.07)',
-                }}
-              >
+              <div className="md:col-span-2 p-3 rounded-lg flex items-center justify-between text-xs"
+                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
                 <div className="flex flex-col gap-0.5">
                   <span className="text-white font-medium">{productoSeleccionado.nombre}</span>
                   <span style={{ color: '#6b7280' }}>
@@ -363,11 +333,14 @@ export default function Movimientos() {
                     <span className="block" style={{ color: '#9ca3af' }}>Stock Mínimo</span>
                     <span className="text-sm font-semibold text-white">{productoSeleccionado.stock_minimo}</span>
                   </div>
-                  {form.cantidad && parseInt(form.cantidad) > 0 && (
+                  {nuevoTotalPreview !== null && (
                     <div>
-                      <span className="block text-emerald-400">Nuevo Total</span>
-                      <span className="text-sm font-bold text-emerald-400">
-                        {stockActual + parseInt(form.cantidad)}
+                      <span className="block" style={{ color: nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#fb923c' : '#34d399' }}>
+                        Nuevo Total
+                      </span>
+                      <span className="text-sm font-bold"
+                        style={{ color: nuevoTotalPreview < 0 ? '#f87171' : nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#fb923c' : '#34d399' }}>
+                        {nuevoTotalPreview}
                       </span>
                     </div>
                   )}
@@ -376,14 +349,8 @@ export default function Movimientos() {
             )}
 
             {error && (
-              <div
-                className="md:col-span-2 text-xs px-3 py-2 rounded-lg"
-                style={{
-                  background: 'rgba(239, 68, 68, 0.1)',
-                  border: '1px solid rgba(239, 68, 68, 0.2)',
-                  color: '#f87171',
-                }}
-              >
+              <div className="md:col-span-2 text-xs px-3 py-2 rounded-lg"
+                style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171' }}>
                 {error}
               </div>
             )}
@@ -394,24 +361,20 @@ export default function Movimientos() {
                 disabled={cargando}
                 className="px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200"
                 style={{
-                  background: 'linear-gradient(135deg, #00c6ff, #39ff14)',
-                  color: '#0a0a0f',
+                  background: form.tipo === 'Entrada'
+                    ? 'linear-gradient(135deg, #00c6ff, #39ff14)'
+                    : 'linear-gradient(135deg,  #00c6ff, #39ff14)',
+                  color: form.tipo === 'Entrada' ? '#0a0a0f' : '#0a0a0f',
                 }}
               >
-                {cargando ? 'Registrando...' : 'Registrar Entrada'}
+                {cargando ? 'Registrando...' : `Registrar ${form.tipo}`}
               </button>
             </div>
           </form>
         </div>
 
-        {/* Historial de Movimientos */}
-        <div
-          className="rounded-xl p-6"
-          style={{
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-          }}
-        >
+        <div className="rounded-xl p-6"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
           <h3 className="text-lg font-medium text-white mb-4">Historial de Movimientos</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm" style={{ color: '#d1d5db' }}>
@@ -433,37 +396,20 @@ export default function Movimientos() {
                   </tr>
                 ) : (
                   movimientos.map((m) => (
-                    <tr
-                      key={m.id_movimiento}
-                      style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
-                    >
-                      <td className="py-3 px-3" style={{ color: '#9ca3af' }}>
-                        {new Date(m.fecha_hora).toLocaleString()}
-                      </td>
-                      <td className="py-3 px-3 font-medium text-white">
-                        {m.producto?.nombre || `Producto #${m.id_producto}`}
-                      </td>
+                    <tr key={m.id_movimiento} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <td className="py-3 px-3" style={{ color: '#9ca3af' }}>{new Date(m.fecha_hora).toLocaleString()}</td>
+                      <td className="py-3 px-3 font-medium text-white">{m.producto?.nombre || `Producto #${m.id_producto}`}</td>
                       <td className="py-3 px-3">
-                        <span
-                          className="text-xs px-2.5 py-0.5 rounded-full font-medium"
+                        <span className="text-xs px-2.5 py-0.5 rounded-full font-medium"
                           style={{
-                            background:
-                              m.tipo === 'Entrada'
-                                ? 'rgba(16, 185, 129, 0.1)'
-                                : 'rgba(239, 68, 68, 0.1)',
-                            border:
-                              m.tipo === 'Entrada'
-                                ? '1px solid rgba(16, 185, 129, 0.3)'
-                                : '1px solid rgba(239, 68, 68, 0.3)',
+                            background: m.tipo === 'Entrada' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                            border: m.tipo === 'Entrada' ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
                             color: m.tipo === 'Entrada' ? '#34d399' : '#f87171',
-                          }}
-                        >
+                          }}>
                           {m.tipo}
                         </span>
                       </td>
-                      <td className="py-3 px-3" style={{ color: '#9ca3af' }}>
-                        {m.origen}
-                      </td>
+                      <td className="py-3 px-3" style={{ color: '#9ca3af' }}>{m.origen}</td>
                       <td className="py-3 px-3 font-semibold text-white">
                         {m.tipo === 'Entrada' ? `+${m.cantidad}` : `-${m.cantidad}`}
                       </td>
