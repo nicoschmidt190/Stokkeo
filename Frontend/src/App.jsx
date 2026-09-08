@@ -6,6 +6,7 @@ import Categorias from './pages/Categorias'
 import Productos from './pages/Productos'
 import Stock from './pages/Stock'
 import Movimientos from './pages/Movimientos'
+import VentaRapida from './pages/VentaRapida'
 
 function RutaProtegida({ children }) {
   const { usuario, cargando } = useAuth()
@@ -22,6 +23,7 @@ function AppRoutes() {
       <Route path="/productos" element={<RutaProtegida><Productos /></RutaProtegida>} />
       <Route path="/stock" element={<RutaProtegida><Stock /></RutaProtegida>} />
       <Route path="/movimientos" element={<RutaProtegida><Movimientos /></RutaProtegida>} />
+      <Route path="/venta-rapida" element={<RutaProtegida><VentaRapida /></RutaProtegida>} />
       <Route path="*" element={<Navigate to="/login" />} />
     </Routes>
   )

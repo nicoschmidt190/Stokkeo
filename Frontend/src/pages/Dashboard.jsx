@@ -52,7 +52,7 @@ export default function Dashboard() {
     { nombre: 'Productos', descripcion: 'Gestiar productos', ruta: '/productos' },
     { nombre: 'Stock', descripcion: 'Gestionar stock', ruta: '/stock' },
     { nombre: 'Movimientos', descripcion: 'Gestionar movimientos', ruta: '/movimientos' },
-    { nombre: 'Venta rápida', descripcion: 'En construcción', ruta: '/venta-rapida' },
+    { nombre: 'Venta rápida', descripcion: 'Salida rápida de stock', ruta: '/venta-rapida' },
     { nombre: 'Dashboard', descripcion: 'En construcción', ruta: '/dashboard' },
   ].map(m => (
     <div key={m.nombre}
