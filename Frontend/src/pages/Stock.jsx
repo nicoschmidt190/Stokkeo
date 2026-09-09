@@ -5,7 +5,7 @@ import logo from '../assets/logo.png'
 
 function BadgeEstado({ estado }) {
   const estilos = {
-    ok: { background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#9ca3af', texto: 'OK' },
+    ok: { background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#34d399', texto: 'OK' },
     bajo: { background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.3)', color: '#fb923c', texto: 'Stock bajo' },
     sin_stock: { background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', texto: 'Sin stock' },
   }
