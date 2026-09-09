@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import logo from '../assets/logo.png'
 
+const UMBRAL_ESCANER_MS = 50 // gap máximo entre teclas para considerarlo escaneo
+
 export default function VentaRapida() {
   const { usuario, logout } = useAuth()
   const navigate = useNavigate()
@@ -16,10 +18,15 @@ export default function VentaRapida() {
 
   const [busqueda, setBusqueda] = useState('')
   const [procesandoId, setProcesandoId] = useState(null)
-  const [indiceSeleccionado, setIndiceSeleccionado] = useState(0) // producto activo (buscar o dentro de categoría)
-  const [indiceCategoria, setIndiceCategoria] = useState(0) // categoría activa en la grilla
+  const [indiceSeleccionado, setIndiceSeleccionado] = useState(0)
+  const [indiceCategoria, setIndiceCategoria] = useState(0)
 
   const [notificacion, setNotificacion] = useState(null)
+
+  // Buffer para detectar escaneo de lector HID
+  const bufferEscanerRef = useRef('')
+  const ultimoTiempoRef = useRef(0)
+  const inicioBufferRef = useRef(0)
 
   const token = localStorage.getItem('token')
   const API_URL = import.meta.env.VITE_API_URL
@@ -77,7 +84,7 @@ export default function VentaRapida() {
     } else if (e.key === 'Enter') {
       e.preventDefault()
       const item = productosFiltrados[indiceSeleccionado]
-      if (item) handleDescontarStock(item)
+      if (item) handleDescontarStock(item, 'Manual')
     } else if (e.key === 'Escape') {
       setBusqueda('')
       setNotificacion(null)
@@ -91,8 +98,6 @@ export default function VentaRapida() {
 
   useEffect(() => { setIndiceSeleccionado(0) }, [categoriaActiva])
 
-  // Navegación por teclado a nivel ventana, solo activa en la pestaña "Categorías"
-  // (acá no hay un input enfocado como en "Buscar", así que escuchamos el keydown global)
   useEffect(() => {
     if (vista !== 'categorias') return
 
@@ -126,7 +131,7 @@ export default function VentaRapida() {
         } else if (e.key === 'Enter') {
           e.preventDefault()
           const item = productosDeCategoria[indiceSeleccionado]
-          if (item) handleDescontarStock(item)
+          if (item) handleDescontarStock(item, 'Manual')
         }
       }
     }
@@ -135,13 +140,76 @@ export default function VentaRapida() {
     return () => window.removeEventListener('keydown', handler)
   }, [vista, categoriaActiva, categorias, productosDeCategoria, indiceCategoria, indiceSeleccionado])
 
-  // --- Acción compartida: descontar 1 unidad (misma para ambas pestañas) ---
-  const handleDescontarStock = async (prod) => {
+  // --- Escaneo global de código de barras (funciona sin foco en ningún campo) ---
+  useEffect(() => {
+    const handleKeyDownEscaner = (e) => {
+      const ahora = Date.now()
+
+      if (e.key === 'Enter') {
+        const codigo = bufferEscanerRef.current.trim()
+        const duracion = ahora - inicioBufferRef.current
+        // Un escaneo real: varios caracteres, todos tipeados muy rápido
+        const pareceEscaneo = codigo.length >= 4 && duracion < codigo.length * UMBRAL_ESCANER_MS * 2
+        bufferEscanerRef.current = ''
+
+        if (pareceEscaneo) {
+          e.preventDefault()
+          e.stopPropagation()
+          procesarCodigoEscaneado(codigo)
+        }
+        return
+      }
+
+      if (e.key.length === 1) {
+        if (ahora - ultimoTiempoRef.current > UMBRAL_ESCANER_MS) {
+          bufferEscanerRef.current = e.key
+          inicioBufferRef.current = ahora
+        } else {
+          bufferEscanerRef.current += e.key
+        }
+        ultimoTiempoRef.current = ahora
+      } else if (e.key !== 'Shift') {
+        bufferEscanerRef.current = ''
+      }
+    }
+
+    // capture: true -> se ejecuta antes que los handlers de los inputs,
+    // así podemos "interceptar" el Enter si detectamos que fue un escaneo
+    window.addEventListener('keydown', handleKeyDownEscaner, true)
+    return () => window.removeEventListener('keydown', handleKeyDownEscaner, true)
+  }, [productos])
+
+  // Deja solo caracteres imprimibles y saca espacios de los extremos —
+// blinda la comparación contra basura invisible que puede mandar el lector
+const limpiarCodigo = (str) => (str || '').replace(/[^\x20-\x7E]/g, '').trim()
+
+const procesarCodigoEscaneado = (codigoCrudo) => {
+  const codigo = limpiarCodigo(codigoCrudo)
+  const producto = productos.find((p) => limpiarCodigo(p.codigo_barras) === codigo)
+
+  if (!producto) {
+    setNotificacion({
+      tipo: 'no_encontrado',
+      mensaje: `El código "${codigo}" no está registrado en el catálogo.`,
+      codigo,
+    })
+    return
+  }
+
+  handleDescontarStock(producto, 'Scanner')
+}
+
+  // --- Acción compartida: descontar 1 unidad ---
+  const handleDescontarStock = async (prod, origen = 'Manual') => {
     if (!prod) return
     const stockActual = prod.stock?.cantidad ?? 0
 
     if (stockActual <= 0) {
       setNotificacion({ tipo: 'error', mensaje: `Sin stock disponible para este producto: "${prod.nombre}"` })
+       if (vista === 'buscar') {
+        setBusqueda('')
+        if (inputBusquedaRef.current) inputBusquedaRef.current.focus()
+  }
       return
     }
 
@@ -155,7 +223,7 @@ export default function VentaRapida() {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ id_producto: prod.id_producto, origen: 'Manual' }),
+        body: JSON.stringify({ id_producto: prod.id_producto, origen }),
       })
 
       const data = await res.json()
@@ -193,6 +261,10 @@ export default function VentaRapida() {
     }
   }
 
+  const irAAgregarProducto = (codigo) => {
+    navigate('/productos', { state: { codigoBarrasPendiente: codigo } })
+  }
+
   const renderCardProducto = (p, idx, resaltar, mostrarCategoria) => {
     const stock = p.stock?.cantidad ?? 0
     const sinStock = stock <= 0
@@ -203,7 +275,7 @@ export default function VentaRapida() {
       <button
         key={p.id_producto}
         disabled={procesandoId === p.id_producto || sinStock}
-        onClick={() => handleDescontarStock(p)}
+        onClick={() => handleDescontarStock(p, 'Manual')}
         onMouseEnter={() => resaltar && setIndiceSeleccionado(idx)}
         className="flex items-center justify-between p-4 rounded-xl text-left transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
         style={{
@@ -263,6 +335,9 @@ export default function VentaRapida() {
 
       <main className="p-8 max-w-4xl mx-auto">
         <h2 className="text-2xl font-semibold text-white mb-2">Venta Rápida</h2>
+        <p className="text-xs mb-4" style={{ color: '#6b7280' }}>
+          📡 Escaneo activo — podés escanear un código en cualquier momento, sin hacer clic en ningún campo.
+        </p>
 
         <div className="flex gap-2 mb-6">
           <button onClick={() => cambiarVista('buscar')}
@@ -288,17 +363,36 @@ export default function VentaRapida() {
         {notificacion && (
           <div className="mb-6 p-4 rounded-xl text-sm font-medium flex items-center justify-between transition-all"
             style={{
-              background: notificacion.tipo === 'ok' ? 'rgba(16, 185, 129, 0.12)' : notificacion.tipo === 'minimo' ? 'rgba(249, 115, 22, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-              border: notificacion.tipo === 'ok' ? '1px solid rgba(16, 185, 129, 0.3)' : notificacion.tipo === 'minimo' ? '1px solid rgba(249, 115, 22, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
-              color: notificacion.tipo === 'ok' ? '#34d399' : notificacion.tipo === 'minimo' ? '#fb923c' : '#f87171',
+              background: notificacion.tipo === 'ok' ? 'rgba(16, 185, 129, 0.12)'
+                : notificacion.tipo === 'minimo' ? 'rgba(249, 115, 22, 0.15)'
+                : notificacion.tipo === 'no_encontrado' ? 'rgba(255,255,255,0.06)'
+                : 'rgba(239, 68, 68, 0.15)',
+              border: notificacion.tipo === 'ok' ? '1px solid rgba(16, 185, 129, 0.3)'
+                : notificacion.tipo === 'minimo' ? '1px solid rgba(249, 115, 22, 0.35)'
+                : notificacion.tipo === 'no_encontrado' ? '1px solid rgba(255,255,255,0.15)'
+                : '1px solid rgba(239, 68, 68, 0.35)',
+              color: notificacion.tipo === 'ok' ? '#34d399'
+                : notificacion.tipo === 'minimo' ? '#fb923c'
+                : notificacion.tipo === 'no_encontrado' ? '#d1d5db'
+                : '#f87171',
             }}>
             <span>
               {notificacion.tipo === 'ok' && '✓ '}
               {notificacion.tipo === 'minimo' && '⚠️ '}
               {notificacion.tipo === 'error' && '✕ '}
+              {notificacion.tipo === 'no_encontrado' && '❓ '}
               {notificacion.mensaje}
             </span>
-            <button onClick={() => setNotificacion(null)} className="text-xs hover:opacity-75 ml-4 font-semibold">Cerrar</button>
+            <div className="flex items-center gap-3 ml-4">
+              {notificacion.tipo === 'no_encontrado' && (
+                <button onClick={() => irAAgregarProducto(notificacion.codigo)}
+                  className="text-xs px-3 py-1.5 rounded-lg font-semibold"
+                  style={{ background: 'rgba(0,198,255,0.15)', border: '1px solid rgba(0,198,255,0.4)', color: '#00c6ff' }}>
+                  Agregar producto
+                </button>
+              )}
+              <button onClick={() => setNotificacion(null)} className="text-xs hover:opacity-75 font-semibold">Cerrar</button>
+            </div>
           </div>
         )}
 
@@ -312,7 +406,7 @@ export default function VentaRapida() {
               <input
                 ref={inputBusquedaRef}
                 type="text"
-                placeholder="Escribí el nombre del producto (mínimo 3 letras)..."
+                placeholder="Escanee el producto o escriba su nombre..."
                 value={busqueda}
                 onChange={(e) => setBusqueda(e.target.value)}
                 onKeyDown={handleKeyDownBuscar}
@@ -353,8 +447,8 @@ export default function VentaRapida() {
               )}
               <p className="text-sm" style={{ color: '#6b7280' }}>
                 {categoriaActiva
-                  ? <>Productos en "{categoriaActiva.nombre}". Navegá con <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">↑</kbd> <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">↓</kbd>, <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">Enter</kbd> descuenta, <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">Esc</kbd> vuelve.</>
-                  : <>Tocá una categoría, o navegá con <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">↑</kbd> <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">↓</kbd> y <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">Enter</kbd>.</>}
+                  ? <>Productos en "{categoriaActiva.nombre}". <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">↑</kbd> <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">↓</kbd>, <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">Enter</kbd> descuenta, <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">Esc</kbd> vuelve.</>
+                  : <>Tocá una categoría o navegá con <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">↑</kbd> <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">↓</kbd> y <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-xs">Enter</kbd>.</>}
               </p>
             </div>
 
