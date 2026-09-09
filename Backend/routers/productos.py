@@ -24,6 +24,16 @@ def crear_producto(producto_in: ProductoCreate, db: Session = Depends(get_db)):
             detail="Ya existe un producto con ese nombre"
         )
 
+    # 1.1 Validar código de barras duplicado (si se ingresó uno)
+    if producto_in.codigo_barras and producto_in.codigo_barras.strip():
+        cod_limpio = producto_in.codigo_barras.strip()
+        existe_cod = db.query(Producto).filter(Producto.codigo_barras == cod_limpio).first()
+        if existe_cod:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"El código de barras '{cod_limpio}' ya está asignado a otro producto"
+            )
+
     # 2. Validar que la categoría exista
     cat_existe = db.query(Categoria).filter(Categoria.id_categoria == producto_in.id_categoria).first()
     if not cat_existe:
@@ -55,19 +65,34 @@ def crear_producto(producto_in: ProductoCreate, db: Session = Depends(get_db)):
 def editar_producto(id_producto: int, producto_in: ProductoCreate, db: Session = Depends(get_db)):
     producto = db.query(Producto).filter(Producto.id_producto == id_producto).first()
     if not producto:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado")
 
+    # 1. Validar nombre duplicado excluyendo el producto actual
     nombre_limpio = producto_in.nombre.strip()
     existe = db.query(Producto).filter(
         Producto.nombre.ilike(nombre_limpio),
         Producto.id_producto != id_producto
     ).first()
     if existe:
-        raise HTTPException(status_code=400, detail="Ya existe un producto con ese nombre")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe un producto con ese nombre")
 
+    # 2. Validar código de barras duplicado excluyendo el producto actual
+    if producto_in.codigo_barras and producto_in.codigo_barras.strip():
+        cod_limpio = producto_in.codigo_barras.strip()
+        existe_cod = db.query(Producto).filter(
+            Producto.codigo_barras == cod_limpio,
+            Producto.id_producto != id_producto
+        ).first()
+        if existe_cod:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"El código de barras '{cod_limpio}' ya está asignado a otro producto"
+            )
+
+    # 3. Validar categoría
     cat_existe = db.query(Categoria).filter(Categoria.id_categoria == producto_in.id_categoria).first()
     if not cat_existe:
-        raise HTTPException(status_code=400, detail="La categoría seleccionada no existe")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La categoría seleccionada no existe")
 
     producto.nombre = nombre_limpio
     producto.precioCosto = producto_in.precioCosto

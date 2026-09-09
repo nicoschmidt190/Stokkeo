@@ -4,14 +4,14 @@ import { useAuth } from '../context/AuthContext'
 import logo from '../assets/logo.png'
 
 export default function Productos() {
-  const { logout } = useAuth()
+  const { usuario, logout } = useAuth()
   const navigate = useNavigate()
 
   const [productos, setProductos] = useState([])
   const [categorias, setCategorias] = useState([])
   const [editando, setEditando] = useState(null)
   
-  // Estados para filtros
+  // Estados para filtros y avisos
   const [busqueda, setBusqueda] = useState('')
   const [mensajeExito, setMensajeExito] = useState('')
   const [categoriaFiltro, setCategoriaFiltro] = useState('')
@@ -32,28 +32,34 @@ export default function Productos() {
   const cargarDatos = async () => {
     try {
       const [resProd, resCat] = await Promise.all([
-        fetch(`${API_URL}/productos`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API_URL}/categorias`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
+        fetch(`${API_URL}/categorias`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
       ])
-      if (resProd.ok) setProductos(await resProd.json())
-      if (resCat.ok) setCategorias(await resCat.json())
+      if (resProd.ok) {
+        const dataProd = await resProd.json()
+        if (Array.isArray(dataProd)) setProductos(dataProd)
+      }
+      if (resCat.ok) {
+        const dataCat = await resCat.json()
+        if (Array.isArray(dataCat)) setCategorias(dataCat)
+      }
     } catch (err) {
       console.error('Error al cargar datos:', err)
     }
   }
 
-  useEffect(() => { cargarDatos() }, [])
+  useEffect(() => {
+    cargarDatos()
+  }, [])
 
   // --- LÓGICA DE FILTRADO COMBINADO ---
   const productosFiltrados = productos.filter((p) => {
     const textoLimpio = busqueda.trim().toLowerCase()
 
-    // 1. Condición de búsqueda: solo filtra si tiene 3 o más caracteres
     const cumpleBusqueda = textoLimpio.length >= 3
       ? p.nombre.toLowerCase().includes(textoLimpio)
       : true
 
-    // 2. Condición de categoría: si hay una categoría seleccionada en el filtro
     const cumpleCategoria = categoriaFiltro
       ? p.id_categoria === parseInt(categoriaFiltro)
       : true
@@ -61,11 +67,51 @@ export default function Productos() {
     return cumpleBusqueda && cumpleCategoria
   })
 
-  const handleLogout = () => { logout(); navigate('/login') }
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
+  }
 
   const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value })
+    const { name, value } = e.target
+    setForm({ ...form, [name]: value })
     setError('')
+
+    // Validación preventiva en cliente al escribir el código de barras
+    if (name === 'codigo_barras' && value.trim()) {
+      const codigoNormalizado = value.trim().toLowerCase()
+      const duplicado = productos.find(
+        (p) =>
+          p.codigo_barras &&
+          p.codigo_barras.trim().toLowerCase() === codigoNormalizado &&
+          (!editando || p.id_producto !== editando.id_producto)
+      )
+      if (duplicado) {
+        setError(`El código ya está asignado al producto "${duplicado.nombre}"`)
+      }
+    }
+  }
+
+  // Generador de código interno único con formato STK-XXXXXXXX
+  const handleGenerarCodigoInterno = () => {
+    let codigoNuevo = ''
+    let existe = true
+
+    while (existe) {
+      const aleatorio = Math.floor(10000000 + Math.random() * 90000000)
+      codigoNuevo = `STK-${aleatorio}`
+      existe = productos.some((p) => p.codigo_barras === codigoNuevo)
+    }
+
+    setForm((prev) => ({ ...prev, codigo_barras: codigoNuevo }))
+    setError('')
+  }
+
+  // Prevenir que el Enter del escáner HID dispare el submit antes de tiempo en este campo
+  const handleKeyDownBarcode = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+    }
   }
 
   const handleEditar = (p) => {
@@ -78,6 +124,7 @@ export default function Productos() {
       id_categoria: p.id_categoria,
     })
     setError('')
+    setMensajeExito('')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -88,14 +135,19 @@ export default function Productos() {
   }
 
   const handleEliminar = async (producto) => {
-    const confirmar = window.confirm(`¿Estás seguro de que querés eliminar "${producto.nombre}"? Se eliminarán también sus precios competidores y stock.`)
+    const idProd = producto.id_producto
+    const nombreProd = producto.nombre || 'Producto'
+
+    const confirmar = window.confirm(
+      `¿Estás seguro de que querés eliminar "${nombreProd}"? Se eliminarán también sus precios competidores y stock.`
+    )
     
     if (!confirmar) return
 
     try {
-      const res = await fetch(`${API_URL}/productos/${producto.id_producto}`, {
+      const res = await fetch(`${API_URL}/productos/${idProd}`, {
         method: 'DELETE',
-        headers: token? { Authorization: `Bearer ${token}` } : {},
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
 
       if (!res.ok) {
@@ -104,18 +156,16 @@ export default function Productos() {
           const data = await res.json()
           if (data?.detail) detalleError = data.detail
         } catch {
-          // Si no hay cuerpo JSON en el error, mantiene el mensaje por defecto
+          // Si no hay cuerpo JSON
         }
         setError(detalleError)
         return
       }
 
-      // Actualizar lista
-      setProductos((prev) => prev.filter((p) => p.id_producto !== producto.id_producto))
+      setProductos((prev) => prev.filter((p) => p.id_producto !== idProd))
       setError('')
 
-      //Mensaje de exito temporal
-      setMensajeExito(`"${producto.nombre}" eliminado correctamente`)
+      setMensajeExito(`"${nombreProd}" eliminado correctamente`)
       setTimeout(() => {
         setMensajeExito('')
       }, 4000)
@@ -139,8 +189,24 @@ export default function Productos() {
       return
     }
 
+    // Comprobación de código duplicado en cliente antes del fetch
+    if (form.codigo_barras.trim()) {
+      const codigoNormalizado = form.codigo_barras.trim().toLowerCase()
+      const duplicado = productos.find(
+        (p) =>
+          p.codigo_barras &&
+          p.codigo_barras.trim().toLowerCase() === codigoNormalizado &&
+          (!editando || p.id_producto !== editando.id_producto)
+      )
+      if (duplicado) {
+        setError(`El código "${form.codigo_barras.trim()}" ya está asignado a "${duplicado.nombre}"`)
+        return
+      }
+    }
+
     setCargando(true)
     setError('')
+    setMensajeExito('')
 
     try {
       const url = editando
@@ -152,7 +218,7 @@ export default function Productos() {
         method,
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           nombre: form.nombre.trim(),
@@ -172,10 +238,13 @@ export default function Productos() {
 
       if (editando) {
         setProductos((prev) => prev.map((p) => p.id_producto === data.id_producto ? data : p))
+        setMensajeExito(`"${data.nombre}" actualizado correctamente`)
       } else {
         setProductos((prev) => [...prev, data])
+        setMensajeExito(`"${data.nombre}" guardado correctamente`)
       }
 
+      setTimeout(() => setMensajeExito(''), 4000)
       setEditando(null)
       setForm({ nombre: '', precioCosto: '', stock_minimo: '', codigo_barras: '', id_categoria: '' })
 
@@ -188,20 +257,40 @@ export default function Productos() {
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
-      <nav style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
-        className="px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/dashboard')}>
+      {/* Navbar */}
+      <nav
+        style={{
+          background: 'rgba(255,255,255,0.03)',
+          borderBottom: '1px solid rgba(255,255,255,0.07)',
+        }}
+        className="px-6 py-4 flex items-center justify-between"
+      >
+        <div
+          className="flex items-center gap-3 cursor-pointer"
+          onClick={() => navigate('/dashboard')}
+        >
           <img src={logo} alt="Stokkeo" className="h-16" />
         </div>
         <div className="flex items-center gap-4">
-          <button onClick={() => navigate('/dashboard')}
-            className="text-sm px-4 py-2 rounded-lg font-medium"
-            style={{ color: '#9ca3af' }}>
+          <span className="text-sm hidden sm:inline" style={{ color: '#6b7280' }}>
+            {usuario?.email}
+          </span>
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="text-sm px-4 py-2 rounded-lg font-medium transition-colors"
+            style={{ color: '#9ca3af' }}
+          >
             Dashboard
           </button>
-          <button onClick={handleLogout}
-            className="text-sm px-4 py-2 rounded-lg font-medium"
-            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#d1d5db' }}>
+          <button
+            onClick={handleLogout}
+            className="text-sm px-4 py-2 rounded-lg font-medium transition-all duration-200"
+            style={{
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: '#d1d5db',
+            }}
+          >
             Cerrar sesión
           </button>
         </div>
@@ -210,7 +299,7 @@ export default function Productos() {
       <main className="p-8 max-w-4xl mx-auto">
         <h2 className="text-2xl font-semibold text-white mb-6">Productos</h2>
 
-        {/* Bloque para leer y mostrar el mensaje */}
+        {/* Notificación de Éxito */}
         {mensajeExito && (
           <div
             className="mb-6 text-xs px-4 py-3 rounded-lg flex items-center justify-between transition-all"
@@ -231,73 +320,157 @@ export default function Productos() {
         )}
 
         {/* Formulario */}
-        <div className="rounded-xl p-6 mb-8"
-          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div
+          className="rounded-xl p-6 mb-8"
+          style={{
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.08)',
+          }}
+        >
           <h3 className="text-lg font-medium text-white mb-4">
             {editando ? `Editando: ${editando.nombre}` : 'Nuevo Producto'}
           </h3>
           <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1">
               <label className="text-xs" style={{ color: '#9ca3af' }}>Nombre *</label>
-              <input name="nombre" placeholder="Ej: Yerba Mate 1kg"
-                value={form.nombre} onChange={handleChange}
+              <input
+                name="nombre"
+                placeholder="Ej: Yerba Mate 1kg"
+                value={form.nombre}
+                onChange={handleChange}
                 className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} />
+                style={{
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                }}
+              />
             </div>
 
             <div className="flex flex-col gap-1">
               <label className="text-xs" style={{ color: '#9ca3af' }}>Categoría *</label>
-              <select name="id_categoria" value={form.id_categoria} onChange={handleChange}
+              <select
+                name="id_categoria"
+                value={form.id_categoria}
+                onChange={handleChange}
                 className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
-                style={{ background: '#121218', border: '1px solid rgba(255,255,255,0.1)' }}>
+                style={{
+                  background: '#121218',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                }}
+              >
                 <option value="">Seleccionar categoría</option>
                 {categorias.map((cat) => (
-                  <option key={cat.id_categoria} value={cat.id_categoria}>{cat.nombre}</option>
+                  <option key={cat.id_categoria} value={cat.id_categoria}>
+                    {cat.nombre}
+                  </option>
                 ))}
               </select>
             </div>
 
             <div className="flex flex-col gap-1">
               <label className="text-xs" style={{ color: '#9ca3af' }}>Precio Costo ($) *</label>
-              <input type="number" step="0.01" min="0" name="precioCosto" placeholder="0.00"
-                value={form.precioCosto} onChange={handleChange}
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                name="precioCosto"
+                placeholder="0.00"
+                value={form.precioCosto}
+                onChange={handleChange}
                 className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} />
+                style={{
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                }}
+              />
             </div>
 
             <div className="flex flex-col gap-1">
               <label className="text-xs" style={{ color: '#9ca3af' }}>Stock Mínimo *</label>
-              <input type="number" min="0" name="stock_minimo" placeholder="Ej: 5"
-                value={form.stock_minimo} onChange={handleChange}
+              <input
+                type="number"
+                min="0"
+                name="stock_minimo"
+                placeholder="Ej: 5"
+                value={form.stock_minimo}
+                onChange={handleChange}
                 className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} />
+                style={{
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                }}
+              />
             </div>
 
+            {/* Código de barras con botón para generación de código interno */}
             <div className="flex flex-col gap-1 md:col-span-2">
-              <label className="text-xs" style={{ color: '#9ca3af' }}>Código de Barras (Opcional)</label>
-              <input name="codigo_barras" placeholder="7791234567890"
-                value={form.codigo_barras} onChange={handleChange}
+              <div className="flex items-center justify-between mb-0.5">
+                <label className="text-xs" style={{ color: '#9ca3af' }}>
+                  Código de Barras (Escaneo HID o manual)
+                </label>
+                <button
+                  type="button"
+                  onClick={handleGenerarCodigoInterno}
+                  className="text-xs px-2.5 py-1 rounded-md transition-all flex items-center gap-1 font-medium"
+                  style={{
+                    background: 'rgba(0, 198, 255, 0.1)',
+                    border: '1px solid rgba(0, 198, 255, 0.3)',
+                    color: '#00c6ff',
+                  }}
+                >
+                  ⚡ Generar código interno
+                </button>
+              </div>
+              <input
+                name="codigo_barras"
+                placeholder="Escaneá con lector HID, escribilo o generá uno interno..."
+                value={form.codigo_barras}
+                onChange={handleChange}
+                onKeyDown={handleKeyDownBarcode}
                 className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} />
+                style={{
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                }}
+              />
             </div>
 
             {error && (
-              <div className="md:col-span-2 text-xs px-3 py-2 rounded-lg"
-                style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171' }}>
+              <div
+                className="md:col-span-2 text-xs px-3 py-2 rounded-lg"
+                style={{
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                  color: '#f87171',
+                }}
+              >
                 {error}
               </div>
             )}
 
             <div className="md:col-span-2 mt-2 flex gap-3">
-              <button type="submit" disabled={cargando}
-                className="px-5 py-2.5 rounded-lg text-sm font-medium"
-                style={{ background: 'linear-gradient(135deg, #00c6ff, #39ff14)', color: '#0a0a0f' }}>
+              <button
+                type="submit"
+                disabled={cargando}
+                className="px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200"
+                style={{
+                  background: 'linear-gradient(135deg, #00c6ff, #39ff14)',
+                  color: '#0a0a0f',
+                }}
+              >
                 {cargando ? 'Guardando...' : editando ? 'Guardar cambios' : 'Guardar Producto'}
               </button>
               {editando && (
-                <button type="button" onClick={handleCancelar}
-                  className="px-5 py-2.5 rounded-lg text-sm font-medium"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#9ca3af' }}>
+                <button
+                  type="button"
+                  onClick={handleCancelar}
+                  className="px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200"
+                  style={{
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    color: '#9ca3af',
+                  }}
+                >
                   Cancelar
                 </button>
               )}
@@ -306,13 +479,16 @@ export default function Productos() {
         </div>
 
         {/* Listado con Filtros */}
-        <div className="rounded-xl p-6"
-          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-          
+        <div
+          className="rounded-xl p-6"
+          style={{
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.08)',
+          }}
+        >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <h3 className="text-lg font-medium text-white">Listado de Productos</h3>
             
-            {/* BARRA DE BÚSQUEDA Y FILTRO */}
             <div className="flex flex-col sm:flex-row gap-3">
               <input
                 type="text"
@@ -320,14 +496,21 @@ export default function Productos() {
                 value={busqueda}
                 onChange={(e) => setBusqueda(e.target.value)}
                 className="px-3 py-1.5 rounded-lg text-sm text-white focus:outline-none"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '220px' }}
+                style={{
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  width: '240px',
+                }}
               />
 
               <select
                 value={categoriaFiltro}
                 onChange={(e) => setCategoriaFiltro(e.target.value)}
                 className="px-3 py-1.5 rounded-lg text-sm text-white focus:outline-none"
-                style={{ background: '#121218', border: '1px solid rgba(255,255,255,0.1)' }}
+                style={{
+                  background: '#121218',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                }}
               >
                 <option value="">Todas las categorías</option>
                 {categorias.map((cat) => (
@@ -362,22 +545,39 @@ export default function Productos() {
                   </tr>
                 ) : (
                   productosFiltrados.map((p) => (
-                    <tr key={p.id_producto}
-                      style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                    <tr
+                      key={p.id_producto}
+                      className="transition-colors"
+                      style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                    >
                       <td className="py-3 px-3 font-medium text-white">{p.nombre}</td>
                       <td className="py-3 px-3">{p.categoria?.nombre || '-'}</td>
-                      <td className="py-3 px-3">${Number(p.precioCosto).toFixed(2)}</td>
+                      <td className="py-3 px-3">${Number(p.precioCosto || 0).toFixed(2)}</td>
                       <td className="py-3 px-3">{p.stock_minimo}</td>
-                      <td className="py-3 px-3" style={{ color: '#6b7280' }}>{p.codigo_barras || '-'}</td>
+                      <td className="py-3 px-3" style={{ color: '#6b7280' }}>
+                        {p.codigo_barras || '-'}
+                      </td>
                       <td className="py-3 px-3 flex gap-2">
-                        <button onClick={() => handleEditar(p)}
-                          className="text-xs px-3 py-1 rounded-lg"
-                          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#9ca3af' }}>
+                        <button
+                          onClick={() => handleEditar(p)}
+                          className="text-xs px-3 py-1 rounded-lg transition-colors"
+                          style={{
+                            background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            color: '#9ca3af',
+                          }}
+                        >
                           Editar
                         </button>
-                        <button onClick={() => handleEliminar(p)}
+                        <button
+                          onClick={() => handleEliminar(p)}
                           className="text-xs px-3 py-1 rounded-lg transition-colors"
-                          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171' }}>
+                          style={{
+                            background: 'rgba(239,68,68,0.1)',
+                            border: '1px solid rgba(239,68,68,0.2)',
+                            color: '#f87171',
+                          }}
+                        >
                           Eliminar
                         </button>
                       </td>
