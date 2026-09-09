@@ -263,7 +263,7 @@ export default function Productos() {
             <div className="md:col-span-2 mt-2 flex gap-3">
               <button type="submit" disabled={cargando}
                 className="px-5 py-2.5 rounded-lg text-sm font-medium"
-                style={{ background: 'linear-gradient(135deg, #10b981, #059669)', color: '#ffffff' }}>
+                style={{ background: 'linear-gradient(135deg, #00c6ff, #39ff14)', color: '#000000' }}>
                 {cargando ? 'Guardando...' : editando ? 'Guardar cambios' : 'Guardar Producto'}
               </button>
               {editando && (
