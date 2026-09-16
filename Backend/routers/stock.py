@@ -13,11 +13,12 @@ def listar_stock(db: Session = Depends(get_db)):
     resultado = []
 
     for p in productos:
-        cantidad = p.stock.cantidad if p.stock else 0
+        cantidad = float(p.stock.cantidad) if p.stock else 0.0
+        stock_minimo = float(p.stock_minimo)
 
-        if cantidad == 0:
+        if cantidad <= 0:
             estado = "sin_stock"
-        elif cantidad <= p.stock_minimo:
+        elif cantidad <= stock_minimo:
             estado = "bajo"
         else:
             estado = "ok"
@@ -27,7 +28,8 @@ def listar_stock(db: Session = Depends(get_db)):
             nombre=p.nombre,
             categoria=p.categoria,
             cantidad=cantidad,
-            stock_minimo=p.stock_minimo,
+            stock_minimo=stock_minimo,
+            unidad_medida=p.unidad_medida,
             estado=estado,
         ))
 

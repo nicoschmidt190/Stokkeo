@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
+from datetime import date, datetime, time
 from pydantic import BaseModel, Field
 from database import get_db
 from models.movimiento import Movimiento
@@ -18,29 +19,37 @@ class VentaRapidaRequest(BaseModel):
 class VentaRapidaResponse(BaseModel):
     id_producto: int
     nombre: str
-    stock_restante: int
-    stock_minimo: int
+    stock_restante: float
+    stock_minimo: float
     estado: str  # 'ok', 'minimo_alcanzado', 'sin_stock'
     mensaje: str
 
 
-# --- ENDPOINTS EXISTENTES ---
-
+# --- ENDPOINTS ---
 @router.get("", response_model=List[MovimientoResponse])
-def listar_movimientos(db: Session = Depends(get_db)):
-    return db.query(Movimiento).order_by(Movimiento.fecha_hora.desc()).all()
+def listar_movimientos(
+    desde: Optional[date] = Query(None, description="Filtra movimientos desde esta fecha (inclusive)"),
+    hasta: Optional[date] = Query(None, description="Filtra movimientos hasta esta fecha (inclusive)"),
+    db: Session = Depends(get_db)
+):
+    query = db.query(Movimiento)
+
+    if desde:
+        query = query.filter(Movimiento.fecha_hora >= datetime.combine(desde, time.min))
+    if hasta:
+        query = query.filter(Movimiento.fecha_hora <= datetime.combine(hasta, time.max))
+
+    return query.order_by(Movimiento.fecha_hora.desc()).all()
 
 
 @router.post("", response_model=MovimientoResponse, status_code=status.HTTP_201_CREATED)
 def registrar_movimiento(movimiento_in: MovimientoCreate, db: Session = Depends(get_db)):
-    # 1. Validar que la cantidad sea mayor a 0
     if movimiento_in.cantidad <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La cantidad debe ser un número mayor a 0"
         )
 
-    # 2. Validar que el producto exista
     producto = db.query(Producto).filter(Producto.id_producto == movimiento_in.id_producto).first()
     if not producto:
         raise HTTPException(
@@ -48,30 +57,43 @@ def registrar_movimiento(movimiento_in: MovimientoCreate, db: Session = Depends(
             detail="Producto no encontrado"
         )
 
-    # 3. Obtener o inicializar el registro de stock
     stock = db.query(Stock).filter(Stock.id_producto == movimiento_in.id_producto).first()
     if not stock:
         stock = Stock(id_producto=movimiento_in.id_producto, cantidad=0)
         db.add(stock)
 
-    # 4. Actualizar la cantidad según el tipo de movimiento
+    cantidad_actual = float(stock.cantidad)
+
     if movimiento_in.tipo == "Entrada":
-        stock.cantidad += movimiento_in.cantidad
+        stock.cantidad = cantidad_actual + movimiento_in.cantidad
     elif movimiento_in.tipo == "Salida":
-        if stock.cantidad < movimiento_in.cantidad:
+        if cantidad_actual < movimiento_in.cantidad:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Stock insuficiente. Stock actual: {stock.cantidad}"
+                detail=f"Stock insuficiente. Stock actual: {cantidad_actual}"
             )
-        stock.cantidad -= movimiento_in.cantidad
+        stock.cantidad = cantidad_actual - movimiento_in.cantidad
 
-    # 5. Registrar el movimiento en el historial
-    nuevo_movimiento = Movimiento(
+    # motivo y observaciones solo tienen sentido en una Salida
+    motivo = movimiento_in.motivo if movimiento_in.tipo == "Salida" else None
+    observaciones = movimiento_in.observaciones if movimiento_in.tipo == "Salida" else None
+
+    datos_movimiento = dict(
         id_producto=movimiento_in.id_producto,
         tipo=movimiento_in.tipo,
         origen=movimiento_in.origen,
-        cantidad=movimiento_in.cantidad
+        cantidad=movimiento_in.cantidad,
+        motivo=motivo,
+        observaciones=observaciones,
     )
+
+    # Si el cliente mandó una fecha, la usamos. Si no, dejamos que el server_default
+    # de la columna (func.now()) ponga la fecha/hora actual — por eso NO asignamos
+    # la clave "fecha_hora" en absoluto cuando viene vacía, en vez de asignarle None.
+    if movimiento_in.fecha_hora is not None:
+        datos_movimiento["fecha_hora"] = movimiento_in.fecha_hora
+
+    nuevo_movimiento = Movimiento(**datos_movimiento)
     db.add(nuevo_movimiento)
     db.commit()
     db.refresh(nuevo_movimiento)
@@ -79,11 +101,8 @@ def registrar_movimiento(movimiento_in: MovimientoCreate, db: Session = Depends(
     return nuevo_movimiento
 
 
-# --- NUEVO ENDPOINT: VENTA RÁPIDA (DESCUENTO DE 1 UNIDAD) ---
-
 @router.post("/venta-rapida", response_model=VentaRapidaResponse)
 def registrar_venta_rapida(payload: VentaRapidaRequest, db: Session = Depends(get_db)):
-    # 1. Buscar el producto
     producto = db.query(Producto).filter(Producto.id_producto == payload.id_producto).first()
     if not producto:
         raise HTTPException(
@@ -91,22 +110,18 @@ def registrar_venta_rapida(payload: VentaRapidaRequest, db: Session = Depends(ge
             detail="Código o producto no registrado en el catálogo"
         )
 
-    # 2. Consultar stock disponible
     stock = db.query(Stock).filter(Stock.id_producto == payload.id_producto).first()
-    stock_actual = stock.cantidad if stock else 0
+    stock_actual = float(stock.cantidad) if stock else 0.0
 
-    # 3. Bloquear si el stock es 0 o negativo
     if stock_actual <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Sin stock disponible para este producto"
         )
 
-    # 4. Descontar exactamente 1 unidad
-    stock.cantidad -= 1
-    nuevo_stock = stock.cantidad
+    stock.cantidad = stock_actual - 1
+    nuevo_stock = float(stock.cantidad)
 
-    # 5. Registrar el movimiento de salida
     movimiento = Movimiento(
         id_producto=payload.id_producto,
         tipo="Salida",
@@ -116,11 +131,12 @@ def registrar_venta_rapida(payload: VentaRapidaRequest, db: Session = Depends(ge
     db.add(movimiento)
     db.commit()
 
-    # 6. Determinar estado visual y mensaje para la alerta
-    if nuevo_stock == 0:
+    stock_minimo = float(producto.stock_minimo)
+
+    if nuevo_stock <= 0:
         estado = "sin_stock"
-        mensaje = f"Sin stock disponible para este producto (Quedan 0 unidades)"
-    elif nuevo_stock <= producto.stock_minimo:
+        mensaje = "Sin stock disponible para este producto (Quedan 0 unidades)"
+    elif nuevo_stock <= stock_minimo:
         estado = "minimo_alcanzado"
         mensaje = f"Stock mínimo alcanzado - Quedan {nuevo_stock} unidades"
     else:
@@ -131,7 +147,7 @@ def registrar_venta_rapida(payload: VentaRapidaRequest, db: Session = Depends(ge
         id_producto=producto.id_producto,
         nombre=producto.nombre,
         stock_restante=nuevo_stock,
-        stock_minimo=producto.stock_minimo,
+        stock_minimo=stock_minimo,
         estado=estado,
         mensaje=mensaje
     )

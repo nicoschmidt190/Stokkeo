@@ -12,5 +12,7 @@ class Movimiento(Base):
     origen = Column(String, nullable=False)  # 'Scanner' o 'Manual'
     cantidad = Column(Numeric(10, 2), nullable=False)
     fecha_hora = Column(DateTime(timezone=True), server_default=func.now())
+    motivo = Column(String, nullable=True)  # solo para Salida: Donacion, Decomiso, Perdida, Rotura
+    observaciones = Column(String, nullable=True)  # solo para Salida
 
     producto = relationship("Producto")

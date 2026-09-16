@@ -11,7 +11,7 @@ class CategoriaNested(BaseModel):
         from_attributes = True
 
 class StockSimple(BaseModel):
-    cantidad: int
+    cantidad: float  # antes int — Stock.cantidad ahora es Numeric (admite decimales)
 
     class Config:
         from_attributes = True
@@ -31,7 +31,7 @@ class ProductoResponse(BaseModel):
     id_producto: int
     nombre: str
     precioCosto: Decimal
-    stock_minimo: int
+    stock_minimo: float  # antes int — Producto.stock_minimo ahora es Numeric
     unidad_medida: str = "unidad"
     codigo_barras: Optional[str] = None
     id_categoria: int
@@ -46,7 +46,7 @@ class StockResponse(BaseModel):
     id_producto: int
     nombre: str
     categoria: Optional[CategoriaNested] = None
-    cantidad: int
-    stock_minimo: int
+    cantidad: float       # antes int
+    stock_minimo: float   # antes int
+    unidad_medida: str    # nuevo — lo usa Stock.jsx para mostrar "4,00 kg" en vez de "4"
     estado: str  # "ok" | "bajo" | "sin_stock"
-    
