@@ -2,13 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from decimal import Decimal
 
-class ProductoCreate(BaseModel):
-    nombre: str = Field(..., min_length=1)
-    precioCosto: float = Field(..., ge=0)
-    stock_minimo: int = Field(..., ge=0)
-    codigo_barras: Optional[str] = None
-    id_categoria: int = Field(..., gt=0)
-
+# Sub-esquemas anidados
 class CategoriaNested(BaseModel):
     id_categoria: int
     nombre: str
@@ -16,18 +10,38 @@ class CategoriaNested(BaseModel):
     class Config:
         from_attributes = True
 
-class ProductoResponse(BaseModel):
-    id_producto: int
-    nombre: str
-    precioCosto: float
-    stock_minimo: int
-    codigo_barras: Optional[str] = None
-    id_categoria: int
-    categoria: Optional[CategoriaNested] = None
+class StockSimple(BaseModel):
+    cantidad: int
 
     class Config:
         from_attributes = True
 
+# Esquema para crear y editar productos
+class ProductoCreate(BaseModel):
+    nombre: str = Field(..., min_length=1)
+    precioCosto: Decimal = Field(..., ge=0)
+    stock_minimo: float = Field(..., ge=0)
+    unidad_medida: str = Field(default="unidad")
+    codigo_barras: Optional[str] = None
+    id_categoria: int = Field(..., gt=0)
+    stock_actual: Optional[float] = Field(default=0, ge=0)
+
+# Esquema de respuesta para producto
+class ProductoResponse(BaseModel):
+    id_producto: int
+    nombre: str
+    precioCosto: Decimal
+    stock_minimo: int
+    unidad_medida: str = "unidad"
+    codigo_barras: Optional[str] = None
+    id_categoria: int
+    categoria: Optional[CategoriaNested] = None
+    stock: Optional[StockSimple] = None
+
+    class Config:
+        from_attributes = True
+
+# Esquema para el listado del módulo Stock
 class StockResponse(BaseModel):
     id_producto: int
     nombre: str
@@ -35,30 +49,4 @@ class StockResponse(BaseModel):
     cantidad: int
     stock_minimo: int
     estado: str  # "ok" | "bajo" | "sin_stock"
-
-class StockSimple(BaseModel):
-    cantidad: int
-
-    class Config:
-        from_attributes = True
-
-class CategoriaSimple(BaseModel):
-    id_categoria: int
-    nombre: str
-
-    class Config:
-        from_attributes = True
-
-class ProductoResponse(BaseModel):
-    id_producto: int
-    nombre: str
-    precioCosto: Decimal
-    stock_minimo: int
-    codigo_barras: Optional[str] = None
-    id_categoria: int
-    categoria: Optional[CategoriaSimple] = None
-    stock: Optional[StockSimple] = None
-
-    class Config:
-        from_attributes = True
     

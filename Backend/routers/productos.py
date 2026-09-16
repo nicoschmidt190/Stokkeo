@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from database import get_db
 from models.producto import Producto, Stock
-#, PrecioCompetidor (agregar cuando este el modulo terminado)
+from models.movimiento import Movimiento
 from models.categoria import Categoria
 from schemas.producto import ProductoCreate, ProductoResponse
 
@@ -24,7 +24,7 @@ def crear_producto(producto_in: ProductoCreate, db: Session = Depends(get_db)):
             detail="Ya existe un producto con ese nombre"
         )
 
-    # 1.1 Validar código de barras duplicado (si se ingresó uno)
+    # 2. Validar código de barras duplicado si fue provisto
     if producto_in.codigo_barras and producto_in.codigo_barras.strip():
         cod_limpio = producto_in.codigo_barras.strip()
         existe_cod = db.query(Producto).filter(Producto.codigo_barras == cod_limpio).first()
@@ -34,7 +34,7 @@ def crear_producto(producto_in: ProductoCreate, db: Session = Depends(get_db)):
                 detail=f"El código de barras '{cod_limpio}' ya está asignado a otro producto"
             )
 
-    # 2. Validar que la categoría exista
+    # 3. Validar categoría
     cat_existe = db.query(Categoria).filter(Categoria.id_categoria == producto_in.id_categoria).first()
     if not cat_existe:
         raise HTTPException(
@@ -42,23 +42,36 @@ def crear_producto(producto_in: ProductoCreate, db: Session = Depends(get_db)):
             detail="La categoría seleccionada no existe"
         )
 
-    # 3. Guardar producto y su fila de stock inicial
+    # 4. Guardar producto
     nuevo_prod = Producto(
         nombre=nombre_limpio,
         precioCosto=producto_in.precioCosto,
         stock_minimo=producto_in.stock_minimo,
         codigo_barras=producto_in.codigo_barras.strip() if producto_in.codigo_barras else None,
+        unidad_medida=producto_in.unidad_medida.strip() if producto_in.unidad_medida else "unidad",
         id_categoria=producto_in.id_categoria
     )
     db.add(nuevo_prod)
     db.commit()
     db.refresh(nuevo_prod)
 
-    # Inicializar stock en 0
-    nuevo_stock = Stock(id_producto=nuevo_prod.id_producto, cantidad=0)
+    # 5. Inicializar stock con el valor ingresado
+    cant_inicial = producto_in.stock_actual or 0
+    nuevo_stock = Stock(id_producto=nuevo_prod.id_producto, cantidad=cant_inicial)
     db.add(nuevo_stock)
-    db.commit()
 
+    # 6. Si se cargó stock inicial > 0, registrar la entrada en Movimientos
+    if cant_inicial > 0:
+        movimiento_inicial = Movimiento(
+            id_producto=nuevo_prod.id_producto,
+            tipo="Entrada",
+            origen="Manual",
+            cantidad=cant_inicial
+        )
+        db.add(movimiento_inicial)
+
+    db.commit()
+    db.refresh(nuevo_prod)
     return nuevo_prod
 
 @router.put("/{id_producto}", response_model=ProductoResponse)
@@ -67,7 +80,7 @@ def editar_producto(id_producto: int, producto_in: ProductoCreate, db: Session =
     if not producto:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado")
 
-    # 1. Validar nombre duplicado excluyendo el producto actual
+    # Validar nombre duplicado excluyendo el actual
     nombre_limpio = producto_in.nombre.strip()
     existe = db.query(Producto).filter(
         Producto.nombre.ilike(nombre_limpio),
@@ -76,7 +89,7 @@ def editar_producto(id_producto: int, producto_in: ProductoCreate, db: Session =
     if existe:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe un producto con ese nombre")
 
-    # 2. Validar código de barras duplicado excluyendo el producto actual
+    # Validar código de barras duplicado excluyendo el actual
     if producto_in.codigo_barras and producto_in.codigo_barras.strip():
         cod_limpio = producto_in.codigo_barras.strip()
         existe_cod = db.query(Producto).filter(
@@ -89,7 +102,7 @@ def editar_producto(id_producto: int, producto_in: ProductoCreate, db: Session =
                 detail=f"El código de barras '{cod_limpio}' ya está asignado a otro producto"
             )
 
-    # 3. Validar categoría
+    # Validar categoría
     cat_existe = db.query(Categoria).filter(Categoria.id_categoria == producto_in.id_categoria).first()
     if not cat_existe:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La categoría seleccionada no existe")
@@ -98,6 +111,7 @@ def editar_producto(id_producto: int, producto_in: ProductoCreate, db: Session =
     producto.precioCosto = producto_in.precioCosto
     producto.stock_minimo = producto_in.stock_minimo
     producto.codigo_barras = producto_in.codigo_barras.strip() if producto_in.codigo_barras else None
+    producto.unidad_medida = producto_in.unidad_medida.strip() if producto_in.unidad_medida else "unidad"
     producto.id_categoria = producto_in.id_categoria
 
     db.commit()
@@ -110,8 +124,8 @@ def eliminar_producto(id_producto: int, db: Session = Depends(get_db)):
     if not producto:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado")
 
-    # 1. Eliminar precios competidores asociados (Agregar cuando este el modulo terminado)
-    # db.query(PrecioCompetidor).filter(PrecioCompetidor.id_producto == id_producto).delete()
+    # 1. Eliminar movimientos asociados
+    db.query(Movimiento).filter(Movimiento.id_producto == id_producto).delete()
 
     # 2. Eliminar stock asociado
     db.query(Stock).filter(Stock.id_producto == id_producto).delete()

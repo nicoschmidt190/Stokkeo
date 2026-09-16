@@ -8,8 +8,9 @@ class Producto(Base):
     id_producto = Column(Integer, primary_key=True, index=True)
     nombre = Column(String, unique=True, nullable=False)
     precioCosto = Column(Numeric(10, 2), nullable=False, default=0.00)
-    stock_minimo = Column(Integer, nullable=False, default=0)
+    stock_minimo = Column(Numeric(10, 2), nullable=False)
     codigo_barras = Column(String, unique=True, nullable=True)
+    unidad_medida = Column(String, nullable=False, default="unidad")
     id_categoria = Column(Integer, ForeignKey("categoria.id_categoria"), nullable=False)
 
     categoria = relationship("Categoria")
@@ -19,6 +20,6 @@ class Stock(Base):
     __tablename__ = "stock"
 
     id_producto = Column(Integer, ForeignKey("producto.id_producto"), primary_key=True)
-    cantidad = Column(Integer, nullable=False, default=0)
+    cantidad = Column(Numeric(10, 2), default=0)
 
     producto = relationship("Producto", back_populates="stock")
