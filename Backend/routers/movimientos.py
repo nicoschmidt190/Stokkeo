@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import date, datetime, time
 from pydantic import BaseModel, Field
@@ -32,7 +32,15 @@ def listar_movimientos(
     hasta: Optional[date] = Query(None, description="Filtra movimientos hasta esta fecha (inclusive)"),
     db: Session = Depends(get_db)
 ):
-    query = db.query(Movimiento)
+    # MovimientoResponse anida producto -> categoria y producto -> stock.
+    # Sin este eager load, por cada movimiento se disparaban 3 queries extra
+    # (producto, categoria, stock) contra Supabase: con 50 movimientos eran
+    # ~150 round-trips en vez de 1. joinedload junta todo en una sola query
+    # con LEFT JOIN.
+    query = db.query(Movimiento).options(
+        joinedload(Movimiento.producto).joinedload(Producto.categoria),
+        joinedload(Movimiento.producto).joinedload(Producto.stock),
+    )
 
     if desde:
         query = query.filter(Movimiento.fecha_hora >= datetime.combine(desde, time.min))
@@ -50,14 +58,21 @@ def registrar_movimiento(movimiento_in: MovimientoCreate, db: Session = Depends(
             detail="La cantidad debe ser un número mayor a 0"
         )
 
-    producto = db.query(Producto).filter(Producto.id_producto == movimiento_in.id_producto).first()
+    # joinedload trae producto + stock en 1 sola query en vez de 2 round-trips
+    # separados contra Supabase.
+    producto = (
+        db.query(Producto)
+        .options(joinedload(Producto.stock))
+        .filter(Producto.id_producto == movimiento_in.id_producto)
+        .first()
+    )
     if not producto:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Producto no encontrado"
         )
 
-    stock = db.query(Stock).filter(Stock.id_producto == movimiento_in.id_producto).first()
+    stock = producto.stock
     if not stock:
         stock = Stock(id_producto=movimiento_in.id_producto, cantidad=0)
         db.add(stock)
@@ -103,14 +118,21 @@ def registrar_movimiento(movimiento_in: MovimientoCreate, db: Session = Depends(
 
 @router.post("/venta-rapida", response_model=VentaRapidaResponse)
 def registrar_venta_rapida(payload: VentaRapidaRequest, db: Session = Depends(get_db)):
-    producto = db.query(Producto).filter(Producto.id_producto == payload.id_producto).first()
+    # 1 sola query (antes eran 2: producto y stock por separado). Achica
+    # el tiempo entre "escanear" y "ver la confirmación" en la pantalla.
+    producto = (
+        db.query(Producto)
+        .options(joinedload(Producto.stock))
+        .filter(Producto.id_producto == payload.id_producto)
+        .first()
+    )
     if not producto:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Código o producto no registrado en el catálogo"
         )
 
-    stock = db.query(Stock).filter(Stock.id_producto == payload.id_producto).first()
+    stock = producto.stock
     stock_actual = float(stock.cantidad) if stock else 0.0
 
     if stock_actual <= 0:

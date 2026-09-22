@@ -11,7 +11,7 @@ class Producto(Base):
     stock_minimo = Column(Numeric(10, 2), nullable=False)
     codigo_barras = Column(String, unique=True, nullable=True)
     unidad_medida = Column(String, nullable=False, default="unidad")
-    id_categoria = Column(Integer, ForeignKey("categoria.id_categoria"), nullable=False)
+    id_categoria = Column(Integer, ForeignKey("categoria.id_categoria"), nullable=False, index=True)
 
     categoria = relationship("Categoria")
     stock = relationship("Stock", back_populates="producto", uselist=False, cascade="all, delete-orphan")

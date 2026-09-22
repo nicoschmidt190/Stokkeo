@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List
 from database import get_db
 from models.producto import Producto, Stock
@@ -11,7 +11,13 @@ router = APIRouter(prefix="/productos", tags=["productos"])
 
 @router.get("", response_model=List[ProductoResponse])
 def listar_productos(db: Session = Depends(get_db)):
-    return db.query(Producto).all()
+    # joinedload trae categoria y stock en la MISMA query (1 solo round-trip
+    # a Supabase) en vez de disparar una consulta lazy por cada producto.
+    return (
+        db.query(Producto)
+        .options(joinedload(Producto.categoria), joinedload(Producto.stock))
+        .all()
+    )
 
 @router.post("", response_model=ProductoResponse, status_code=status.HTTP_201_CREATED)
 def crear_producto(producto_in: ProductoCreate, db: Session = Depends(get_db)):

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List
 from database import get_db
 from models.producto import Producto
@@ -9,7 +9,13 @@ router = APIRouter(prefix="/stock", tags=["stock"])
 
 @router.get("", response_model=List[StockResponse])
 def listar_stock(db: Session = Depends(get_db)):
-    productos = db.query(Producto).all()
+    # Antes: por cada producto se accedía a p.stock y p.categoria sin eager
+    # load, disparando 2 queries extra por fila contra Supabase (N+1).
+    productos = (
+        db.query(Producto)
+        .options(joinedload(Producto.categoria), joinedload(Producto.stock))
+        .all()
+    )
     resultado = []
 
     for p in productos:
