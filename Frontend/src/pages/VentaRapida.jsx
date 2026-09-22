@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useCategorias } from '../context/CategoriasContext'
 import logo from '../assets/logo.png'
 
 const UMBRAL_ESCANER_MS = 50
@@ -8,12 +9,12 @@ const UMBRAL_ESCANER_MS = 50
 export default function VentaRapida() {
   const { usuario, logout } = useAuth()
   const navigate = useNavigate()
+  const { categorias, cargarCategorias } = useCategorias()
   const inputBusquedaRef = useRef(null)
 
   const [vista, setVista] = useState('buscar') // 'buscar' | 'categorias'
 
   const [productos, setProductos] = useState([])
-  const [categorias, setCategorias] = useState([])
   const [categoriaActiva, setCategoriaActiva] = useState(null)
 const [cargandoDatos, setCargandoDatos] = useState(true)
 
@@ -34,17 +35,10 @@ const [cargandoDatos, setCargandoDatos] = useState(true)
   const cargarDatos = async () => {
     setCargandoDatos(true)
     try {
-      const [resProd, resCat] = await Promise.all([
-        fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-        fetch(`${API_URL}/categorias`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-      ])
+      const resProd = await fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       if (resProd.ok) {
         const data = await resProd.json()
         if (Array.isArray(data)) setProductos(data)
-      }
-      if (resCat.ok) {
-        const data = await resCat.json()
-        if (Array.isArray(data)) setCategorias(data)
       }
     } catch (err) {
       console.error('Error al cargar catálogo:', err)
@@ -55,6 +49,7 @@ const [cargandoDatos, setCargandoDatos] = useState(true)
 
   useEffect(() => {
     cargarDatos()
+    cargarCategorias() // no dispara fetch si ya estaban cargadas por otro módulo
     if (inputBusquedaRef.current) inputBusquedaRef.current.focus()
   }, [])
 

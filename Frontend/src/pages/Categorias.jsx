@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useCategorias } from '../context/CategoriasContext'
 import { useNavigate } from 'react-router-dom'
 import logo from '../assets/logo.png'
 
 export default function Categorias() {
   const { token, logout } = useAuth()
   const navigate = useNavigate()
+  const { cargarCategorias: refrescarCacheGlobal } = useCategorias()
 
   const [categorias, setCategorias] = useState([])
   const [nombre, setNombre] = useState('')
@@ -54,6 +56,7 @@ export default function Categorias() {
       setNombre('')
       setEditando(null)
       cargarCategorias()
+      refrescarCacheGlobal(true) // sincroniza el caché que usan Productos/Stock/Movimientos/VentaRápida
     } catch {
       setError('Error de conexión')
     } finally {
@@ -88,6 +91,7 @@ export default function Categorias() {
       setTimeout(() => setMensajeExito(''), 4000)
 
       cargarCategorias()
+      refrescarCacheGlobal(true) // sincroniza el caché que usan Productos/Stock/Movimientos/VentaRápida
     } catch {
       setError('Error de conexión')
     }

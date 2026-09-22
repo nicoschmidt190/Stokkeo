@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useCategorias } from '../context/CategoriasContext'
 import logo from '../assets/logo.png'
 
 const ETIQUETAS_UNIDAD = {
@@ -31,11 +32,11 @@ const obtenerFechaHoraLocal = () => {
 export default function Movimientos() {
   const { usuario, logout } = useAuth()
   const navigate = useNavigate()
+  const { categorias, cargarCategorias } = useCategorias()
   const inputScannerRef = useRef(null)
   const fechaInicialRef = useRef(obtenerFechaHoraLocal())
 
   const [productos, setProductos] = useState([])
-  const [categorias, setCategorias] = useState([])
   const [movimientos, setMovimientos] = useState([])
   const [busquedaRapida, setBusquedaRapida] = useState('')
   const [cargandoDatos, setCargandoDatos] = useState(true)
@@ -87,18 +88,12 @@ export default function Movimientos() {
   const cargarDatosIniciales = async () => {
     setCargandoDatos(true)
     try {
-      const [resProd, resCat] = await Promise.all([
-        fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-        fetch(`${API_URL}/categorias`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-      ])
+      const resProd = await fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       if (resProd.ok) {
         const dataProd = await resProd.json()
         if (Array.isArray(dataProd)) setProductos(dataProd)
       }
-      if (resCat.ok) {
-        const dataCat = await resCat.json()
-        if (Array.isArray(dataCat)) setCategorias(dataCat)
-      }
+      cargarCategorias() // no dispara fetch si ya estaban cargadas por otro módulo
       await cargarMovimientos()
     } catch (err) {
       console.error('Error al cargar datos:', err)

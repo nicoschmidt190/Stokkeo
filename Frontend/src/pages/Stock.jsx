@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useCategorias } from '../context/CategoriasContext'
 import logo from '../assets/logo.png'
 
 const ETIQUETAS_UNIDAD = {
@@ -33,9 +34,9 @@ function BadgeEstado({ estado }) {
 export default function Stock() {
   const { logout } = useAuth()
   const navigate = useNavigate()
+  const { categorias, cargarCategorias } = useCategorias()
 
   const [stock, setStock] = useState([])
-  const [categorias, setCategorias] = useState([])
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
 
@@ -49,14 +50,9 @@ export default function Stock() {
   const cargarDatos = async () => {
     setCargando(true)
     try {
-      const [resStock, resCat] = await Promise.all([
-        fetch(`${API_URL}/stock`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-        fetch(`${API_URL}/categorias`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-      ])
+      const resStock = await fetch(`${API_URL}/stock`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       if (resStock.ok) setStock(await resStock.json())
       else setError('No se pudo cargar el stock')
-
-      if (resCat.ok) setCategorias(await resCat.json())
     } catch {
       setError('Sin conexión al cargar el stock')
     } finally {
@@ -64,7 +60,10 @@ export default function Stock() {
     }
   }
 
-  useEffect(() => { cargarDatos() }, [])
+  useEffect(() => {
+    cargarDatos()
+    cargarCategorias() // no dispara fetch si ya estaban cargadas por otro módulo
+  }, [])
 
   const handleLogout = () => { logout(); navigate('/login') }
 

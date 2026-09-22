@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useCategorias } from '../context/CategoriasContext'
 import logo from '../assets/logo.png'
 
 const UNIDADES_MEDIDA = [
@@ -24,9 +25,9 @@ const ETIQUETAS_UNIDAD = {
 export default function Productos() {
   const { usuario, logout } = useAuth()
   const navigate = useNavigate()
+  const { categorias, cargarCategorias } = useCategorias()
 
   const [productos, setProductos] = useState([])
-  const [categorias, setCategorias] = useState([])
   const [editando, setEditando] = useState(null)
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
   const [cargandoDatos, setCargandoDatos] = useState(true)
@@ -59,17 +60,10 @@ export default function Productos() {
   const cargarDatos = async () => {
     setCargandoDatos(true)
     try {
-      const [resProd, resCat] = await Promise.all([
-        fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-        fetch(`${API_URL}/categorias`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-      ])
+      const resProd = await fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       if (resProd.ok) {
         const dataProd = await resProd.json()
         if (Array.isArray(dataProd)) setProductos(dataProd)
-      }
-      if (resCat.ok) {
-        const dataCat = await resCat.json()
-        if (Array.isArray(dataCat)) setCategorias(dataCat)
       }
     } catch (err) {
       console.error('Error al cargar datos:', err)
@@ -80,6 +74,7 @@ export default function Productos() {
 
   useEffect(() => {
     cargarDatos()
+    cargarCategorias() // no dispara fetch si ya estaban cargadas por otro módulo
   }, [])
 
   const handleLogout = () => {
