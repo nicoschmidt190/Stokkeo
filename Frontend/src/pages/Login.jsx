@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import logo from '../assets/logo.png'
 
@@ -47,27 +46,21 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center px-4"
       style={{ background: 'linear-gradient(135deg, #0a0a0f 0%, #0d1117 50%, #0a0f0a 100%)' }}>
 
-      {/* Fondo decorativo */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full opacity-10"
           style={{ background: 'radial-gradient(circle, #00c6ff 0%, transparent 70%)' }} />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 rounded-full opacity-10"
-          style={{ background: 'radial-gradient(circle, #39ff14 0%, transparent 70%)' }} />
+          style={{ background: 'radial-gradient(circle, #10b981 0%, transparent 70%)' }} />
       </div>
 
       <div className="w-full max-w-md relative z-10">
 
-        {/* Logo y título */}
-        <div className="text-center mb-10">
-          <img 
-              src="/src/assets/logo.png" 
-              alt="Stokkeo" 
-              className="h-22 mx-auto mb-2"
-          />
-          <p className="text-sm mt-2" style={{ color: '#6b7280' }}>Gestión de stock inteligente</p>
+        {/* Logo y título — encabezado más chico que antes */}
+        <div className="text-center mb-8">
+          <img src={logo} alt="Stokkeo" className="h-14 mx-auto mb-2" />
+          <p className="text-sm mt-1" style={{ color: '#6b7280' }}>Gestión de stock inteligente</p>
         </div>
 
-        {/* Card del formulario */}
         <div className="rounded-2xl p-8"
           style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(20px)' }}>
 
@@ -118,17 +111,20 @@ export default function Login() {
               </div>
             )}
 
+            {/* Botón sólido verde: es la acción de "confirmar e ingresar" */}
             <button
               type="submit"
               disabled={cargando || !form.email || !form.password}
-              className="w-full py-3 rounded-xl font-semibold text-white mt-1 transition-all duration-200"
+              className="w-full py-2.5 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all duration-200"
               style={{
-                background: (!form.email || !form.password || cargando)
-                  ? 'rgba(255,255,255,0.1)'
-                  : 'linear-gradient(135deg, #00c6ff, #39ff14)',
+                background: (!form.email || !form.password || cargando) ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #00c6ff, #39ff14)',
                 cursor: (!form.email || !form.password || cargando) ? 'not-allowed' : 'pointer',
                 color: (!form.email || !form.password || cargando) ? '#6b7280' : '#0a0a0f',
-              }}>
+               }}>
+              {cargando && (
+                <span className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin"
+                  style={{ borderColor: 'rgba(255,255,255,0.4)', borderTopColor: '#ffffff' }} />
+              )}
               {cargando ? 'Ingresando...' : 'Ingresar'}
             </button>
 

@@ -29,14 +29,13 @@ export default function Productos() {
   const [categorias, setCategorias] = useState([])
   const [editando, setEditando] = useState(null)
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
+  const [cargandoDatos, setCargandoDatos] = useState(true)
 
-  // Estados para filtros, orden y avisos
   const [busqueda, setBusqueda] = useState('')
   const [mensajeExito, setMensajeExito] = useState('')
   const [categoriaFiltro, setCategoriaFiltro] = useState('')
   const [orden, setOrden] = useState({ columna: 'nombre', direccion: 'asc' })
 
-  // Formulario y valores visibles formateados
   const [form, setForm] = useState({
     nombre: '',
     precioCosto: '',
@@ -58,6 +57,7 @@ export default function Productos() {
   const API_URL = import.meta.env.VITE_API_URL
 
   const cargarDatos = async () => {
+    setCargandoDatos(true)
     try {
       const [resProd, resCat] = await Promise.all([
         fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
@@ -73,6 +73,8 @@ export default function Productos() {
       }
     } catch (err) {
       console.error('Error al cargar datos:', err)
+    } finally {
+      setCargandoDatos(false)
     }
   }
 
@@ -85,13 +87,11 @@ export default function Productos() {
     navigate('/login')
   }
 
-  // Helper para saber si la medida actual admite decimales
   const admiteDecimales = (unidad) => {
     const config = UNIDADES_MEDIDA.find((u) => u.valor === unidad)
     return config ? config.esDecimal : false
   }
 
-  // Helper para formatear valores de stock según la unidad
   const formatearStockValor = (num, unidad) => {
     if (num === '' || num === null || num === undefined || isNaN(num)) return ''
     const tieneDecimal = admiteDecimales(unidad)
@@ -101,7 +101,6 @@ export default function Productos() {
     })
   }
 
-  // Conversión en tiempo real de Precio
   const handleChangePrecioEnVivo = (e) => {
     const soloNumeros = e.target.value.replace(/\D/g, '')
     if (!soloNumeros) {
@@ -120,7 +119,6 @@ export default function Productos() {
     if (erroresCampos.precioCosto) setErroresCampos((prev) => ({ ...prev, precioCosto: false }))
   }
 
-  // Conversión en tiempo real de Stock según Unidad de Medida
   const handleChangeStockEnVivo = (e, campo, setVisible) => {
     const soloNumeros = e.target.value.replace(/\D/g, '')
     const esDecimal = admiteDecimales(form.unidad_medida)
@@ -132,7 +130,6 @@ export default function Productos() {
     }
 
     if (esDecimal) {
-      // Si es decimal (ej. kg/litros): últimos 2 dígitos son decimales
       const valorDecimal = (parseInt(soloNumeros, 10) / 100).toFixed(2)
       setForm((prev) => ({ ...prev, [campo]: valorDecimal }))
       setVisible(
@@ -142,7 +139,6 @@ export default function Productos() {
         })
       )
     } else {
-      // Si es entero (ej. unidades/cajas)
       const valorEntero = parseInt(soloNumeros, 10).toString()
       setForm((prev) => ({ ...prev, [campo]: valorEntero }))
       setVisible(Number(valorEntero).toLocaleString('es-AR'))
@@ -151,7 +147,6 @@ export default function Productos() {
     if (erroresCampos[campo]) setErroresCampos((prev) => ({ ...prev, [campo]: false }))
   }
 
-  // Al cambiar la unidad de medida, reformatear stock visible
   const handleCambioUnidad = (e) => {
     const nuevaUnidad = e.target.value
     setForm((prev) => ({ ...prev, unidad_medida: nuevaUnidad }))
@@ -361,7 +356,6 @@ export default function Productos() {
     }
   }
 
-  // Filtrado y ordenamiento de productos
   const productosProcesados = productos
     .filter((p) => {
       const textoLimpio = busqueda.trim().toLowerCase()
@@ -403,29 +397,36 @@ export default function Productos() {
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
-      {/* Navbar */}
+      {/* Navbar — encabezado más chico */}
       <nav style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
-        className="px-6 py-4 flex items-center justify-between">
+        className="px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/dashboard')}>
-          <img src={logo} alt="Stokkeo" className="h-16" />
+          <img src={logo} alt="Stokkeo" className="h-12" />
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-sm hidden sm:inline" style={{ color: '#6b7280' }}>{usuario?.email}</span>
-          <button onClick={() => navigate('/dashboard')} className="text-sm px-4 py-2 rounded-lg font-medium transition-colors" style={{ color: '#9ca3af' }}>
+          <button onClick={() => navigate('/dashboard')} className="text-sm px-3 py-1.5 rounded-lg font-medium transition-colors" style={{ color: '#9ca3af' }}>
             Dashboard
           </button>
-          <button onClick={handleLogout} className="text-sm px-4 py-2 rounded-lg font-medium"
+          <button onClick={handleLogout} className="text-sm px-3 py-1.5 rounded-lg font-medium"
             style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#d1d5db' }}>
             Cerrar sesión
           </button>
         </div>
       </nav>
 
-      <main className="p-8 max-w-4xl mx-auto">
+      <main className="p-8 max-w-4xl mx-auto relative">
+        {cargandoDatos && (
+          <div className="absolute inset-0 flex items-center justify-center z-10"
+            style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
+            <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }} />
+          </div>
+        )}
+
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-semibold text-white">Productos</h2>
+          <h2 className="text-xl font-semibold text-white">Productos</h2>
           {!mostrarFormulario && (
-            <button onClick={handleAbrirNuevo} className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
+            <button onClick={handleAbrirNuevo} className="px-3 py-1.5 rounded-lg text-sm font-medium transition-all"
               style={{ background: 'linear-gradient(135deg, #00c6ff, #39ff14)', color: '#0a0a0f' }}>
               + Agregar producto
             </button>
@@ -440,7 +441,6 @@ export default function Productos() {
           </div>
         )}
 
-        {/* Formulario */}
         {mostrarFormulario && (
           <div className="rounded-xl p-6 mb-8" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div className="flex items-center justify-between mb-4">
@@ -449,7 +449,6 @@ export default function Productos() {
             </div>
 
             <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Nombre */}
               <div className="flex flex-col gap-1">
                 <label className="text-xs" style={{ color: erroresCampos.nombre ? '#f87171' : '#9ca3af' }}>Nombre *</label>
                 <input name="nombre" placeholder="Ej: Yerba Mate 1kg" value={form.nombre} onChange={handleChange}
@@ -457,7 +456,6 @@ export default function Productos() {
                   style={{ background: 'rgba(255,255,255,0.05)', border: erroresCampos.nombre ? '1px solid #ef4444' : '1px solid rgba(255,255,255,0.1)' }} />
               </div>
 
-              {/* Categoría */}
               <div className="flex flex-col gap-1">
                 <label className="text-xs" style={{ color: erroresCampos.id_categoria ? '#f87171' : '#9ca3af' }}>Categoría *</label>
                 <select name="id_categoria" value={form.id_categoria} onChange={handleChange}
@@ -470,7 +468,6 @@ export default function Productos() {
                 </select>
               </div>
 
-              {/* Unidad de Medida */}
               <div className="flex flex-col gap-1">
                 <label className="text-xs" style={{ color: '#9ca3af' }}>Unidad de Medida *</label>
                 <select name="unidad_medida" value={form.unidad_medida} onChange={handleCambioUnidad}
@@ -482,7 +479,6 @@ export default function Productos() {
                 </select>
               </div>
 
-              {/* Precio Costo */}
               <div className="flex flex-col gap-1">
                 <label className="text-xs" style={{ color: erroresCampos.precioCosto ? '#f87171' : '#9ca3af' }}>Precio Costo *</label>
                 <div className="relative">
@@ -493,7 +489,6 @@ export default function Productos() {
                 </div>
               </div>
 
-              {/* Stock Inicial con conversión en vivo */}
               <div className="flex flex-col gap-1">
                 <label className="text-xs" style={{ color: erroresCampos.stock_actual ? '#f87171' : '#9ca3af' }}>
                   {editando ? 'Stock Actual (Informativo)' : 'Stock Inicial *'}
@@ -511,7 +506,6 @@ export default function Productos() {
                 </div>
               </div>
 
-              {/* Stock Mínimo con conversión en vivo */}
               <div className="flex flex-col gap-1">
                 <label className="text-xs" style={{ color: erroresCampos.stock_minimo ? '#f87171' : '#9ca3af' }}>Stock Mínimo *</label>
                 <div className="relative">
@@ -527,7 +521,6 @@ export default function Productos() {
                 </div>
               </div>
 
-              {/* Código de barras */}
               <div className="flex flex-col gap-1 md:col-span-2">
                 <div className="flex items-center justify-between mb-0.5">
                   <label className="text-xs" style={{ color: '#9ca3af' }}>Código de Barras</label>
@@ -552,11 +545,16 @@ export default function Productos() {
               )}
 
               <div className="md:col-span-2 mt-2 flex gap-3">
-                <button type="submit" disabled={cargando} className="px-5 py-2.5 rounded-lg text-sm font-medium transition-all"
+                {/* Botón sólido verde: confirmar/guardar */}
+                <button type="submit" disabled={cargando} className="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
                   style={{ background: 'linear-gradient(135deg, #00c6ff, #39ff14)', color: '#0a0a0f' }}>
+                  {cargando && (
+                    <span className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin"
+                      style={{ borderColor: 'rgba(10,10,15,0.3)', borderTopColor: '#0a0a0f' }} />
+                  )}
                   {cargando ? 'Guardando...' : editando ? 'Guardar cambios' : 'Guardar Producto'}
                 </button>
-                <button type="button" onClick={handleCancelar} className="px-5 py-2.5 rounded-lg text-sm font-medium"
+                <button type="button" onClick={handleCancelar} className="px-4 py-2 rounded-lg text-sm font-medium"
                   style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#9ca3af' }}>
                   Cancelar
                 </button>
@@ -565,7 +563,6 @@ export default function Productos() {
           </div>
         )}
 
-        {/* Listado con Filtros y Ordenamiento */}
         <div className="rounded-xl p-6" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <h3 className="text-lg font-medium text-white">Listado de Productos</h3>
@@ -618,7 +615,7 @@ export default function Productos() {
                     </td>
                   </tr>
                 ) : (
-                  productosProcesados.map((p) => {
+                  productosProcesados.map((p, i) => {
                     const esDec = admiteDecimales(p.unidad_medida)
                     const stockMinFormateado = Number(p.stock_minimo || 0).toLocaleString('es-AR', {
                       minimumFractionDigits: esDec ? 2 : 0,
@@ -626,7 +623,11 @@ export default function Productos() {
                     })
 
                     return (
-                      <tr key={p.id_producto} className="transition-colors" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <tr key={p.id_producto} className="transition-colors"
+                        style={{
+                          borderBottom: '1px solid rgba(255,255,255,0.04)',
+                          background: i % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent',
+                        }}>
                         <td className="py-3 px-3 font-medium text-white">{p.nombre}</td>
                         <td className="py-3 px-3">{p.categoria?.nombre || '-'}</td>
                         <td className="py-3 px-3 font-mono">
@@ -642,8 +643,9 @@ export default function Productos() {
                           {p.codigo_barras || '-'}
                         </td>
                         <td className="py-3 px-3 flex gap-2">
+                          {/* Editar: celeste — es navegación hacia el formulario */}
                           <button onClick={() => handleEditar(p)} className="text-xs px-3 py-1 rounded-lg"
-                            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#9ca3af' }}>
+                            style={{ background: 'rgba(0,198,255,0.1)', border: '1px solid rgba(0,198,255,0.3)', color: '#00c6ff' }}>
                             Editar
                           </button>
                           <button onClick={() => handleEliminar(p)} className="text-xs px-3 py-1 rounded-lg"

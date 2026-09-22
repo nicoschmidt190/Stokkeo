@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import logo from '../assets/logo.png'
 
-const UMBRAL_ESCANER_MS = 50 // gap máximo entre teclas para considerarlo escaneo
+const UMBRAL_ESCANER_MS = 50
 
 export default function VentaRapida() {
   const { usuario, logout } = useAuth()
@@ -15,6 +15,7 @@ export default function VentaRapida() {
   const [productos, setProductos] = useState([])
   const [categorias, setCategorias] = useState([])
   const [categoriaActiva, setCategoriaActiva] = useState(null)
+const [cargandoDatos, setCargandoDatos] = useState(true)
 
   const [busqueda, setBusqueda] = useState('')
   const [procesandoId, setProcesandoId] = useState(null)
@@ -23,7 +24,6 @@ export default function VentaRapida() {
 
   const [notificacion, setNotificacion] = useState(null)
 
-  // Buffer para detectar escaneo de lector HID
   const bufferEscanerRef = useRef('')
   const ultimoTiempoRef = useRef(0)
   const inicioBufferRef = useRef(0)
@@ -32,6 +32,7 @@ export default function VentaRapida() {
   const API_URL = import.meta.env.VITE_API_URL
 
   const cargarDatos = async () => {
+    setCargandoDatos(true)
     try {
       const [resProd, resCat] = await Promise.all([
         fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
@@ -47,6 +48,8 @@ export default function VentaRapida() {
       }
     } catch (err) {
       console.error('Error al cargar catálogo:', err)
+    } finally {
+      setCargandoDatos(false)
     }
   }
 
@@ -54,6 +57,14 @@ export default function VentaRapida() {
     cargarDatos()
     if (inputBusquedaRef.current) inputBusquedaRef.current.focus()
   }, [])
+
+  // Auto-cierre del mensaje flotante — excepto "no_encontrado", que tiene
+  // un botón de acción y necesita que el usuario decida qué hacer
+  useEffect(() => {
+    if (!notificacion || notificacion.tipo === 'no_encontrado') return
+    const timer = setTimeout(() => setNotificacion(null), 4000)
+    return () => clearTimeout(timer)
+  }, [notificacion])
 
   const handleLogout = () => { logout(); navigate('/login') }
 
@@ -65,7 +76,6 @@ export default function VentaRapida() {
     setIndiceCategoria(0)
   }
 
-  // --- Lógica de la pestaña "Buscar" ---
   const textoLimpio = busqueda.trim().toLowerCase()
   const productosFiltrados = textoLimpio.length >= 3
     ? productos.filter((p) => p.nombre.toLowerCase().includes(textoLimpio))
@@ -91,7 +101,6 @@ export default function VentaRapida() {
     }
   }
 
-  // --- Lógica de la pestaña "Categorías" ---
   const productosDeCategoria = categoriaActiva
     ? productos.filter((p) => p.id_categoria === categoriaActiva.id_categoria)
     : []
@@ -140,7 +149,6 @@ export default function VentaRapida() {
     return () => window.removeEventListener('keydown', handler)
   }, [vista, categoriaActiva, categorias, productosDeCategoria, indiceCategoria, indiceSeleccionado])
 
-  // --- Escaneo global de código de barras (funciona sin foco en ningún campo) ---
   useEffect(() => {
     const handleKeyDownEscaner = (e) => {
       const ahora = Date.now()
@@ -148,7 +156,6 @@ export default function VentaRapida() {
       if (e.key === 'Enter') {
         const codigo = bufferEscanerRef.current.trim()
         const duracion = ahora - inicioBufferRef.current
-        // Un escaneo real: varios caracteres, todos tipeados muy rápido
         const pareceEscaneo = codigo.length >= 4 && duracion < codigo.length * UMBRAL_ESCANER_MS * 2
         bufferEscanerRef.current = ''
 
@@ -173,43 +180,38 @@ export default function VentaRapida() {
       }
     }
 
-    // capture: true -> se ejecuta antes que los handlers de los inputs,
-    // así podemos "interceptar" el Enter si detectamos que fue un escaneo
     window.addEventListener('keydown', handleKeyDownEscaner, true)
     return () => window.removeEventListener('keydown', handleKeyDownEscaner, true)
   }, [productos])
 
-  // Deja solo caracteres imprimibles y saca espacios de los extremos —
-// blinda la comparación contra basura invisible que puede mandar el lector
-const limpiarCodigo = (str) => (str || '').replace(/[^\x20-\x7E]/g, '').trim()
+  const limpiarCodigo = (str) => (str || '').replace(/[^\x20-\x7E]/g, '').trim()
 
-const procesarCodigoEscaneado = (codigoCrudo) => {
-  const codigo = limpiarCodigo(codigoCrudo)
-  const producto = productos.find((p) => limpiarCodigo(p.codigo_barras) === codigo)
+  const procesarCodigoEscaneado = (codigoCrudo) => {
+    const codigo = limpiarCodigo(codigoCrudo)
+    const producto = productos.find((p) => limpiarCodigo(p.codigo_barras) === codigo)
 
-  if (!producto) {
-    setNotificacion({
-      tipo: 'no_encontrado',
-      mensaje: `El código "${codigo}" no está registrado en el catálogo.`,
-      codigo,
-    })
-    return
+    if (!producto) {
+      setNotificacion({
+        tipo: 'no_encontrado',
+        mensaje: `El código "${codigo}" no está registrado en el catálogo.`,
+        codigo,
+      })
+      return
+    }
+
+    handleDescontarStock(producto, 'Scanner')
   }
 
-  handleDescontarStock(producto, 'Scanner')
-}
-
-  // --- Acción compartida: descontar 1 unidad ---
   const handleDescontarStock = async (prod, origen = 'Manual') => {
     if (!prod) return
     const stockActual = prod.stock?.cantidad ?? 0
 
     if (stockActual <= 0) {
       setNotificacion({ tipo: 'error', mensaje: `Sin stock disponible para este producto: "${prod.nombre}"` })
-       if (vista === 'buscar') {
+      if (vista === 'buscar') {
         setBusqueda('')
         if (inputBusquedaRef.current) inputBusquedaRef.current.focus()
-  }
+      }
       return
     }
 
@@ -313,64 +315,19 @@ const procesarCodigoEscaneado = (codigoCrudo) => {
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
-      <nav style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
-        className="px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/dashboard')}>
-          <img src={logo} alt="Stokkeo" className="h-16" />
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm hidden sm:inline" style={{ color: '#6b7280' }}>{usuario?.email}</span>
-          <button onClick={() => navigate('/dashboard')}
-            className="text-sm px-4 py-2 rounded-lg font-medium transition-colors"
-            style={{ color: '#9ca3af' }}>
-            Dashboard
-          </button>
-          <button onClick={handleLogout}
-            className="text-sm px-4 py-2 rounded-lg font-medium transition-all duration-200"
-            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#d1d5db' }}>
-            Cerrar sesión
-          </button>
-        </div>
-      </nav>
-
-      <main className="p-8 max-w-4xl mx-auto">
-        <h2 className="text-2xl font-semibold text-white mb-2">Venta Rápida</h2>
-        <p className="text-xs mb-4" style={{ color: '#6b7280' }}>
-          📡 Escaneo activo — podés escanear un código en cualquier momento, sin hacer clic en ningún campo.
-        </p>
-
-        <div className="flex gap-2 mb-6">
-          <button onClick={() => cambiarVista('buscar')}
-            className="text-sm px-4 py-2 rounded-lg font-medium transition-colors"
+      {/* Mensaje flotante fijo arriba de la pantalla, por encima de todo */}
+      {notificacion && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-lg px-4">
+          <div className="p-4 rounded-xl text-sm font-medium flex items-center justify-between shadow-lg"
             style={{
-              background: vista === 'buscar' ? 'rgba(0,198,255,0.12)' : 'rgba(255,255,255,0.04)',
-              border: vista === 'buscar' ? '1px solid rgba(0,198,255,0.4)' : '1px solid rgba(255,255,255,0.08)',
-              color: vista === 'buscar' ? '#00c6ff' : '#9ca3af',
-            }}>
-            Buscar
-          </button>
-          <button onClick={() => cambiarVista('categorias')}
-            className="text-sm px-4 py-2 rounded-lg font-medium transition-colors"
-            style={{
-              background: vista === 'categorias' ? 'rgba(0,198,255,0.12)' : 'rgba(255,255,255,0.04)',
-              border: vista === 'categorias' ? '1px solid rgba(0,198,255,0.4)' : '1px solid rgba(255,255,255,0.08)',
-              color: vista === 'categorias' ? '#00c6ff' : '#9ca3af',
-            }}>
-            Categorías
-          </button>
-        </div>
-
-        {notificacion && (
-          <div className="mb-6 p-4 rounded-xl text-sm font-medium flex items-center justify-between transition-all"
-            style={{
-              background: notificacion.tipo === 'ok' ? 'rgba(16, 185, 129, 0.12)'
-                : notificacion.tipo === 'minimo' ? 'rgba(249, 115, 22, 0.15)'
-                : notificacion.tipo === 'no_encontrado' ? 'rgba(255,255,255,0.06)'
-                : 'rgba(239, 68, 68, 0.15)',
-              border: notificacion.tipo === 'ok' ? '1px solid rgba(16, 185, 129, 0.3)'
-                : notificacion.tipo === 'minimo' ? '1px solid rgba(249, 115, 22, 0.35)'
-                : notificacion.tipo === 'no_encontrado' ? '1px solid rgba(255,255,255,0.15)'
-                : '1px solid rgba(239, 68, 68, 0.35)',
+              background: notificacion.tipo === 'ok' ? '#0f2e22'
+                : notificacion.tipo === 'minimo' ? '#3a2410'
+                : notificacion.tipo === 'no_encontrado' ? '#1a1a22'
+                : '#3a1414',
+              border: notificacion.tipo === 'ok' ? '1px solid rgba(16, 185, 129, 0.4)'
+                : notificacion.tipo === 'minimo' ? '1px solid rgba(249, 115, 22, 0.45)'
+                : notificacion.tipo === 'no_encontrado' ? '1px solid rgba(255,255,255,0.2)'
+                : '1px solid rgba(239, 68, 68, 0.45)',
               color: notificacion.tipo === 'ok' ? '#34d399'
                 : notificacion.tipo === 'minimo' ? '#fb923c'
                 : notificacion.tipo === 'no_encontrado' ? '#d1d5db'
@@ -394,7 +351,58 @@ const procesarCodigoEscaneado = (codigoCrudo) => {
               <button onClick={() => setNotificacion(null)} className="text-xs hover:opacity-75 font-semibold">Cerrar</button>
             </div>
           </div>
-        )}
+        </div>
+      )}
+
+      <nav style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+        className="px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/dashboard')}>
+          <img src={logo} alt="Stokkeo" className="h-12" />
+        </div>
+        <div className="flex items-center gap-4">
+          <button onClick={() => navigate('/dashboard')}
+            className="text-sm px-3 py-1.5 rounded-lg font-medium transition-colors"
+            style={{ color: '#9ca3af' }}>
+            Dashboard
+          </button>
+          <button onClick={handleLogout}
+            className="text-sm px-3 py-1.5 rounded-lg font-medium transition-all duration-200"
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#d1d5db' }}>
+            Cerrar sesión
+          </button>
+        </div>
+      </nav>
+
+      <main className="p-8 max-w-4xl mx-auto">
+        {cargandoDatos && (
+          <div className="absolute inset-0 flex items-center justify-center z-10"
+             style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
+            <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }} />
+            </div>
+ )}
+        <h2 className="text-xl font-semibold text-white mb-2">Venta Rápida</h2>
+
+        <div className="flex gap-2 mb-6">
+          <button onClick={() => cambiarVista('buscar')}
+            className="text-sm px-4 py-2 rounded-lg font-medium transition-colors"
+            style={{
+              background: vista === 'buscar' ? 'rgba(0,198,255,0.12)' : 'rgba(255,255,255,0.04)',
+              border: vista === 'buscar' ? '1px solid rgba(0,198,255,0.4)' : '1px solid rgba(255,255,255,0.08)',
+              color: vista === 'buscar' ? '#00c6ff' : '#9ca3af',
+            }}>
+            Buscar
+          </button>
+          <button onClick={() => cambiarVista('categorias')}
+            className="text-sm px-4 py-2 rounded-lg font-medium transition-colors"
+            style={{
+              background: vista === 'categorias' ? 'rgba(0,198,255,0.12)' : 'rgba(255,255,255,0.04)',
+              border: vista === 'categorias' ? '1px solid rgba(0,198,255,0.4)' : '1px solid rgba(255,255,255,0.08)',
+              color: vista === 'categorias' ? '#00c6ff' : '#9ca3af',
+            }}>
+            Categorías
+          </button>
+        </div>
 
         {vista === 'buscar' && (
           <>
@@ -406,7 +414,7 @@ const procesarCodigoEscaneado = (codigoCrudo) => {
               <input
                 ref={inputBusquedaRef}
                 type="text"
-                placeholder="Escanee el producto o escriba su nombre..."
+                placeholder="Escribí el nombre del producto (mínimo 3 letras)..."
                 value={busqueda}
                 onChange={(e) => setBusqueda(e.target.value)}
                 onKeyDown={handleKeyDownBuscar}
@@ -471,7 +479,7 @@ const procesarCodigoEscaneado = (codigoCrudo) => {
                         }}>
                         <div className="flex items-center gap-2 mb-3">
                           <div className="w-8 h-8 rounded-lg"
-                            style={{ background: 'linear-gradient(135deg, #00c6ff22, #39ff1422)', border: '1px solid rgba(57,255,20,0.2)' }} />
+                            style={{ background: 'rgba(0,198,255,0.15)', border: '1px solid rgba(0,198,255,0.35)' }} />
                           {estaActivo && (
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-400 font-bold">↵ Enter</span>
                           )}

@@ -354,7 +354,6 @@ export default function Movimientos() {
           <img src={logo} alt="Stokkeo" className="h-12" />
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-sm hidden sm:inline" style={{ color: '#6b7280' }}>{usuario?.email}</span>
           <button onClick={() => navigate('/dashboard')}
             className="text-sm px-4 py-2 rounded-lg font-medium transition-colors"
             style={{ color: '#9ca3af' }}>
@@ -564,14 +563,18 @@ export default function Movimientos() {
             <div className="md:col-span-2 mt-2">
               <button
                 type="submit"
-                disabled={cargando}
-                className="px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200"
-                style={{
-                 background: 'linear-gradient(135deg, #00c6ff, #39ff14)',   
-                 color: '#0a0a0f',
-                }}
-              >
-                {cargando ? 'Registrando...' : `Registrar ${form.tipo}`}
+                  disabled={cargando}
+                  className="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center justify-center gap-2"
+                  style={{
+                    background: form.tipo === 'Entrada' ? '#10b981' : '#ef4444',
+                    color: '#ffffff',
+                  }}
+                >
+                  {cargando && (
+                    <span className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin"
+                      style={{ borderColor: 'rgba(255,255,255,0.4)', borderTopColor: '#ffffff' }} />
+                  )}
+                  {cargando ? 'Registrando...' : `Registrar ${form.tipo}`}
               </button>
             </div>
           </form>
