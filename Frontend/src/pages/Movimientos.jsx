@@ -22,7 +22,6 @@ const MOTIVOS_SALIDA = [
   { valor: 'Rotura', label: 'Rotura' },
 ]
 
-// yyyy-MM-ddTHH:mm en hora LOCAL, formato que espera un <input type="datetime-local">
 const obtenerFechaHoraLocal = () => {
   const ahora = new Date()
   const offsetMs = ahora.getTimezoneOffset() * 60000
@@ -51,6 +50,7 @@ export default function Movimientos() {
     observaciones: '',
   })
 
+  const [erroresCampos, setErroresCampos] = useState({})
   const [error, setError] = useState('')
   const [mensajeExito, setMensajeExito] = useState('')
   const [cargando, setCargando] = useState(false)
@@ -88,12 +88,14 @@ export default function Movimientos() {
   const cargarDatosIniciales = async () => {
     setCargandoDatos(true)
     try {
-      const resProd = await fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      const resProd = await fetch(`${API_URL}/productos`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
       if (resProd.ok) {
         const dataProd = await resProd.json()
         if (Array.isArray(dataProd)) setProductos(dataProd)
       }
-      cargarCategorias() // no dispara fetch si ya estaban cargadas por otro módulo
+      cargarCategorias()
       await cargarMovimientos()
     } catch (err) {
       console.error('Error al cargar datos:', err)
@@ -103,15 +105,18 @@ export default function Movimientos() {
     }
   }
 
-  useEffect(() => { cargarDatosIniciales() }, [])
+  useEffect(() => {
+    cargarDatosIniciales()
+  }, [])
 
-  // Cuando cambia el rango de fechas, le volvemos a pedir el historial al backend
-  // (el filtrado de fecha vive en la consulta SQL, no en el cliente)
   useEffect(() => {
     if (!cargandoDatos) cargarMovimientos()
   }, [fechaDesde, fechaHasta])
 
-  const handleLogout = () => { logout(); navigate('/login') }
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
+  }
 
   const productoSeleccionado = productos.find(
     (p) => p.id_producto === parseInt(form.id_producto)
@@ -125,9 +130,12 @@ export default function Movimientos() {
     const valLimpio = valor.trim().toLowerCase()
     if (!valLimpio) return
 
-    const matchBarcode = productos.find((p) => p.codigo_barras && p.codigo_barras.trim().toLowerCase() === valLimpio)
+    const matchBarcode = productos.find(
+      (p) => p.codigo_barras && p.codigo_barras.trim().toLowerCase() === valLimpio
+    )
     if (matchBarcode) {
       setForm((prev) => ({ ...prev, id_producto: matchBarcode.id_producto.toString(), origen: 'Scanner' }))
+      setErroresCampos((prev) => ({ ...prev, id_producto: false }))
       setError('')
       return
     }
@@ -135,6 +143,7 @@ export default function Movimientos() {
     const matchNombre = productos.find((p) => p.nombre.toLowerCase().includes(valLimpio))
     if (matchNombre) {
       setForm((prev) => ({ ...prev, id_producto: matchNombre.id_producto.toString(), origen: 'Manual' }))
+      setErroresCampos((prev) => ({ ...prev, id_producto: false }))
       setError('')
     }
   }
@@ -154,6 +163,7 @@ export default function Movimientos() {
           id_producto: match.id_producto.toString(),
           origen: match.codigo_barras?.toLowerCase() === valLimpio ? 'Scanner' : 'Manual',
         }))
+        setErroresCampos((prev) => ({ ...prev, id_producto: false }))
         setBusquedaRapida('')
         setError('')
       } else {
@@ -163,11 +173,14 @@ export default function Movimientos() {
   }
 
   const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value })
+    const { name, value } = e.target
+    setForm({ ...form, [name]: value })
     setError('')
+    if (erroresCampos[name]) {
+      setErroresCampos((prev) => ({ ...prev, [name]: false }))
+    }
   }
 
-  // Un solo botón: alterna entre Entrada y Salida
   const alternarTipo = () => {
     setForm((prev) => ({
       ...prev,
@@ -175,6 +188,7 @@ export default function Movimientos() {
       motivo: '',
       observaciones: '',
     }))
+    setErroresCampos({})
     setError('')
   }
 
@@ -192,28 +206,36 @@ export default function Movimientos() {
       motivo: '',
       observaciones: '',
     }))
+    setErroresCampos({})
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
 
+    const errores = {}
     if (!form.id_producto) {
-      setError('Tenés que seleccionar o escanear un producto')
-      return
+      errores.id_producto = true
     }
 
     const cant = parseFloat(form.cantidad)
     if (!form.cantidad || isNaN(cant) || cant <= 0) {
-      setError('La cantidad debe ser un número mayor a 0')
+      errores.cantidad = true
+    }
+
+    if (Object.keys(errores).length > 0) {
+      setErroresCampos(errores)
+      setError('Completá los campos obligatorios marcados en rojo (*)')
       return
     }
 
     if (form.tipo === 'Salida' && cant > stockActual) {
-      setError(`No podés retirar ${cant} ${ETIQUETAS_UNIDAD[unidadProducto] || unidadProducto}: el stock disponible es de ${stockActual}`)
+      setErroresCampos({ cantidad: true })
+      setError(
+        `No podés retirar ${cant} ${ETIQUETAS_UNIDAD[unidadProducto] || unidadProducto}: el stock disponible es de ${stockActual}`
+      )
       return
     }
 
-    // Si el usuario tocó el campo de fecha, confirmamos antes de guardar
     if (fechaFueModificada) {
       const confirmar = window.confirm(
         'Modificaste la fecha del movimiento. ¿Estás seguro de que querés registrarlo con esa fecha?'
@@ -297,7 +319,7 @@ export default function Movimientos() {
     ? (form.tipo === 'Entrada' ? stockActual + parseFloat(form.cantidad) : stockActual - parseFloat(form.cantidad))
     : null
 
-  // --- Filtrado del historial: nombre/categoría (cliente) — la fecha ya viene filtrada del backend ---
+  // --- Filtrado y orden del historial ---
   const movimientosFiltrados = movimientos.filter((m) => {
     const textoLimpio = busquedaLista.trim().toLowerCase()
     const nombreProd = m.producto?.nombre?.toLowerCase() || ''
@@ -343,20 +365,26 @@ export default function Movimientos() {
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
-      <nav style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
-        className="px-6 py-3 flex items-center justify-between">
+      <nav
+        style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+        className="px-6 py-3 flex items-center justify-between"
+      >
         <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/dashboard')}>
           <img src={logo} alt="Stokkeo" className="h-12" />
         </div>
         <div className="flex items-center gap-4">
-          <button onClick={() => navigate('/dashboard')}
+          <button
+            onClick={() => navigate('/dashboard')}
             className="text-sm px-4 py-2 rounded-lg font-medium transition-colors"
-            style={{ color: '#9ca3af' }}>
+            style={{ color: '#9ca3af' }}
+          >
             Dashboard
           </button>
-          <button onClick={handleLogout}
+          <button
+            onClick={handleLogout}
             className="text-sm px-4 py-2 rounded-lg font-medium transition-all duration-200"
-            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#d1d5db' }}>
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#d1d5db' }}
+          >
             Cerrar sesión
           </button>
         </div>
@@ -364,26 +392,33 @@ export default function Movimientos() {
 
       <main className="p-8 max-w-4xl mx-auto relative">
         {cargandoDatos && (
-          <div className="absolute inset-0 flex items-center justify-center z-10"
-            style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
-            <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }} />
+          <div
+            className="absolute inset-0 flex items-center justify-center z-10"
+            style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}
+          >
+            <div
+              className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }}
+            />
           </div>
         )}
 
         <h2 className="text-xl font-semibold text-white mb-4">Movimientos de Stock</h2>
 
         {mensajeExito && (
-          <div className="mb-6 text-xs px-4 py-3 rounded-lg flex items-center justify-between transition-all"
-            style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', color: '#34d399' }}>
+          <div
+            className="mb-6 text-xs px-4 py-3 rounded-lg flex items-center justify-between transition-all"
+            style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', color: '#34d399' }}
+          >
             <span>✓ {mensajeExito}</span>
             <button onClick={() => setMensajeExito('')} className="text-xs hover:opacity-75 ml-2 text-emerald-400">✕</button>
           </div>
         )}
 
-        <div className="rounded-xl p-6 mb-8"
-          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-
+        <div
+          className="rounded-xl p-6 mb-8"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+        >
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-medium text-white">
               {form.tipo === 'Entrada' ? 'Ingreso de Mercadería' : 'Salida de Mercadería'}
@@ -395,14 +430,16 @@ export default function Movimientos() {
             )}
           </div>
 
-          {/* Un solo botón que alterna Entrada <-> Salida */}
-          <button type="button" onClick={alternarTipo}
+          <button
+            type="button"
+            onClick={alternarTipo}
             className="w-full text-sm py-2.5 rounded-lg font-semibold mb-4 transition-colors"
             style={{
               background: form.tipo === 'Entrada' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
               border: form.tipo === 'Entrada' ? '1px solid rgba(16,185,129,0.4)' : '1px solid rgba(239,68,68,0.4)',
               color: form.tipo === 'Entrada' ? '#34d399' : '#f87171',
-            }}>
+            }}
+          >
             {form.tipo === 'Entrada' ? '⬇ Entrada' : '⬆ Salida'} — tocá para cambiar a {form.tipo === 'Entrada' ? 'Salida' : 'Entrada'}
           </button>
 
@@ -423,14 +460,28 @@ export default function Movimientos() {
           </div>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Selección de Producto */}
             <div className="flex flex-col gap-1">
-              <label className="text-xs" style={{ color: '#9ca3af' }}>Seleccionar Producto *</label>
+              <label
+                className="text-xs"
+                style={{ color: erroresCampos.id_producto ? '#f87171' : '#9ca3af' }}
+              >
+                Seleccionar Producto *
+              </label>
               <select
                 name="id_producto"
                 value={form.id_producto}
-                onChange={(e) => { handleChange(e); setForm((prev) => ({ ...prev, origen: 'Manual' })) }}
-                className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
-                style={{ background: '#121218', border: '1px solid rgba(255,255,255,0.1)' }}
+                onChange={(e) => {
+                  handleChange(e)
+                  setForm((prev) => ({ ...prev, origen: 'Manual' }))
+                }}
+                className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none transition-all"
+                style={{
+                  background: '#121218',
+                  border: erroresCampos.id_producto
+                    ? '1px solid #ef4444'
+                    : '1px solid rgba(255,255,255,0.1)',
+                }}
               >
                 <option value="">-- Seleccionar de la lista --</option>
                 {productos.map((p) => (
@@ -441,8 +492,12 @@ export default function Movimientos() {
               </select>
             </div>
 
+            {/* Cantidad */}
             <div className="flex flex-col gap-1">
-              <label className="text-xs" style={{ color: '#9ca3af' }}>
+              <label
+                className="text-xs"
+                style={{ color: erroresCampos.cantidad ? '#f87171' : '#9ca3af' }}
+              >
                 Cantidad a {form.tipo === 'Entrada' ? 'sumar' : 'retirar'} *
               </label>
               <div className="relative">
@@ -455,8 +510,13 @@ export default function Movimientos() {
                   placeholder={admiteDecimales ? '0.00' : '0'}
                   value={form.cantidad}
                   onChange={handleChange}
-                  className="w-full pl-3 pr-12 py-2 rounded-lg text-sm text-white focus:outline-none"
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                  className="w-full pl-3 pr-12 py-2 rounded-lg text-sm text-white focus:outline-none transition-all font-mono"
+                  style={{
+                    background: 'rgba(255,255,255,0.05)',
+                    border: erroresCampos.cantidad
+                      ? '1px solid #ef4444'
+                      : '1px solid rgba(255,255,255,0.1)',
+                  }}
                 />
                 <span className="absolute right-3 top-2.5 text-xs text-cyan-400 font-semibold pointer-events-none select-none">
                   {ETIQUETAS_UNIDAD[unidadProducto] || unidadProducto}
@@ -464,7 +524,7 @@ export default function Movimientos() {
               </div>
             </div>
 
-            {/* Fecha del movimiento — editable */}
+            {/* Fecha del movimiento */}
             <div className="flex flex-col gap-1">
               <label className="text-xs" style={{ color: '#9ca3af' }}>
                 Fecha y hora {fechaFueModificada && <span style={{ color: '#fb923c' }}>(modificada)</span>}
@@ -482,7 +542,7 @@ export default function Movimientos() {
               />
             </div>
 
-            {/* Motivo y observaciones — solo para Salida */}
+            {/* Motivo y observaciones (Salida) */}
             {form.tipo === 'Salida' && (
               <>
                 <div className="flex flex-col gap-1">
@@ -516,8 +576,10 @@ export default function Movimientos() {
             )}
 
             {productoSeleccionado && (
-              <div className="md:col-span-2 p-3 rounded-lg flex items-center justify-between text-xs"
-                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <div
+                className="md:col-span-2 p-3 rounded-lg flex items-center justify-between text-xs"
+                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+              >
                 <div className="flex flex-col gap-0.5">
                   <span className="text-white font-medium">{productoSeleccionado.nombre}</span>
                   <span style={{ color: '#6b7280' }}>
@@ -538,8 +600,10 @@ export default function Movimientos() {
                       <span className="block" style={{ color: nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#fb923c' : '#34d399' }}>
                         Nuevo Total
                       </span>
-                      <span className="text-sm font-bold"
-                        style={{ color: nuevoTotalPreview < 0 ? '#f87171' : nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#fb923c' : '#34d399' }}>
+                      <span
+                        className="text-sm font-bold"
+                        style={{ color: nuevoTotalPreview < 0 ? '#f87171' : nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#fb923c' : '#34d399' }}
+                      >
                         {nuevoTotalPreview}
                       </span>
                     </div>
@@ -549,8 +613,10 @@ export default function Movimientos() {
             )}
 
             {error && (
-              <div className="md:col-span-2 text-xs px-3 py-2 rounded-lg"
-                style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171' }}>
+              <div
+                className="md:col-span-2 text-xs px-3 py-2 rounded-lg"
+                style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171' }}
+              >
                 {error}
               </div>
             )}
@@ -558,26 +624,30 @@ export default function Movimientos() {
             <div className="md:col-span-2 mt-2">
               <button
                 type="submit"
-                  disabled={cargando}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center justify-center gap-2"
-                  style={{
-                    background: form.tipo === 'Entrada' ? '#10b981' : '#ef4444',
-                    color: '#ffffff',
-                  }}
-                >
-                  {cargando && (
-                    <span className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin"
-                      style={{ borderColor: 'rgba(255,255,255,0.4)', borderTopColor: '#ffffff' }} />
-                  )}
-                  {cargando ? 'Registrando...' : `Registrar ${form.tipo}`}
+                disabled={cargando}
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center justify-center gap-2"
+                style={{
+                  background: 'linear-gradient(135deg, #00c6ff, #39ff14)',
+                  color: '#0a0a0f',
+                }}
+              >
+                {cargando && (
+                  <span
+                    className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin"
+                    style={{ borderColor: 'rgba(10,10,15,0.3)', borderTopColor: '#0a0a0f' }}
+                  />
+                )}
+                {cargando ? 'Registrando...' : `Registrar ${form.tipo}`}
               </button>
             </div>
           </form>
         </div>
 
-        <div className="rounded-xl p-6"
-          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-
+        {/* Historial */}
+        <div
+          className="rounded-xl p-6"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+        >
           <div className="flex flex-col gap-3 mb-6">
             <h3 className="text-lg font-medium text-white">Historial de Movimientos</h3>
 
@@ -620,9 +690,11 @@ export default function Movimientos() {
                   style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
                 />
                 {(fechaDesde || fechaHasta) && (
-                  <button onClick={() => { setFechaDesde(''); setFechaHasta('') }}
+                  <button
+                    onClick={() => { setFechaDesde(''); setFechaHasta('') }}
                     className="text-xs px-2 py-1 rounded-md"
-                    style={{ background: 'rgba(255,255,255,0.06)', color: '#9ca3af' }}>
+                    style={{ background: 'rgba(255,255,255,0.06)', color: '#9ca3af' }}
+                  >
                     Limpiar
                   </button>
                 )}
@@ -663,7 +735,8 @@ export default function Movimientos() {
                   movimientosOrdenados.map((m, i) => {
                     const unidad = ETIQUETAS_UNIDAD[m.producto?.unidad_medida] || m.producto?.unidad_medida || ''
                     return (
-                      <tr key={m.id_movimiento}
+                      <tr
+                        key={m.id_movimiento}
                         style={{
                           borderBottom: '1px solid rgba(255,255,255,0.04)',
                           background: i % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent',
@@ -673,12 +746,14 @@ export default function Movimientos() {
                         <td className="py-3 px-3" style={{ color: '#9ca3af' }}>{new Date(m.fecha_hora).toLocaleString()}</td>
                         <td className="py-3 px-3 font-medium text-white">{m.producto?.nombre || `Producto #${m.id_producto}`}</td>
                         <td className="py-3 px-3">
-                          <span className="text-xs px-2.5 py-0.5 rounded-full font-medium"
+                          <span
+                            className="text-xs px-2.5 py-0.5 rounded-full font-medium"
                             style={{
                               background: m.tipo === 'Entrada' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
                               border: m.tipo === 'Entrada' ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
                               color: m.tipo === 'Entrada' ? '#34d399' : '#f87171',
-                            }}>
+                            }}
+                          >
                             {m.tipo}
                           </span>
                         </td>
