@@ -1,22 +1,60 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
-from typing import List
+from typing import List, Optional
 from database import get_db
 from models.producto import Producto, Stock
 from models.movimiento import Movimiento
 from models.categoria import Categoria
 from schemas.producto import ProductoCreate, ProductoResponse
+from schemas.pagination import PaginatedResponse
 
 router = APIRouter(prefix="/productos", tags=["productos"])
 
-@router.get("", response_model=List[ProductoResponse])
-def listar_productos(db: Session = Depends(get_db)):
-    # joinedload trae categoria y stock en la MISMA query (1 solo round-trip
-    # a Supabase) en vez de disparar una consulta lazy por cada producto.
-    return (
-        db.query(Producto)
-        .options(joinedload(Producto.categoria), joinedload(Producto.stock))
+@router.get("", response_model=PaginatedResponse[ProductoResponse])
+def listar_productos(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(30, ge=1, le=5000),
+    # El tope de 5000 (en vez de algo chico como 200) es a propósito:
+    # VentaRápida y el formulario de Movimientos necesitan el catálogo
+    # COMPLETO en memoria para poder buscar por nombre/código al vuelo
+    # (igual que una caja registradora), así que piden page_size=5000 para
+    # traer "todo" en una sola llamada. La tabla de administración de
+    # Productos, en cambio, pide el page_size chico (30) por defecto.
+    search: Optional[str] = Query(None, description="Filtra por nombre o código de barras"),
+    id_categoria: Optional[int] = Query(None),
+    db: Session = Depends(get_db)
+):
+    # Paginación + filtro server-side: con ~1000 productos, traer todo de
+    # una vez y filtrar en el navegador deja de ser lo mejor (payload grande
+    # en wifi inestable + 1000 filas para renderizar). Acá el WHERE y el
+    # LIMIT/OFFSET corren en Supabase, así que siempre viaja solo la página
+    # que se está mostrando.
+    query = db.query(Producto).options(
+        joinedload(Producto.categoria), joinedload(Producto.stock)
+    )
+
+    if search:
+        patron = f"%{search.strip()}%"
+        query = query.filter(
+            (Producto.nombre.ilike(patron)) | (Producto.codigo_barras.ilike(patron))
+        )
+    if id_categoria:
+        query = query.filter(Producto.id_categoria == id_categoria)
+
+    total = query.with_entities(func.count(Producto.id_producto)).scalar()
+
+    items = (
+        query.order_by(Producto.nombre.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
+    )
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+
+    return PaginatedResponse(
+        items=items, total=total, page=page, page_size=page_size, total_pages=total_pages
     )
 
 @router.post("", response_model=ProductoResponse, status_code=status.HTTP_201_CREATED)

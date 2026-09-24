@@ -1,30 +1,22 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import Alerta from '../components/Alerta'
+import { useCategorias } from '../context/CategoriasContext'
 import logo from '../assets/logo.png'
 
 const UMBRAL_ESCANER_MS = 50
 
-// Traduce el tipo interno de este módulo al set de colores que maneja <Alerta>
-const mapearTipoAlerta = (tipo) => {
-  if (tipo === 'ok') return 'ok'
-  if (tipo === 'minimo') return 'advertencia'
-  if (tipo === 'no_encontrado') return 'info'
-  return 'error'
-}
-
 export default function VentaRapida() {
   const { usuario, logout } = useAuth()
   const navigate = useNavigate()
+  const { categorias, cargarCategorias } = useCategorias()
   const inputBusquedaRef = useRef(null)
 
   const [vista, setVista] = useState('buscar') // 'buscar' | 'categorias'
 
   const [productos, setProductos] = useState([])
-  const [categorias, setCategorias] = useState([])
   const [categoriaActiva, setCategoriaActiva] = useState(null)
-  const [cargandoDatos, setCargandoDatos] = useState(true)
+const [cargandoDatos, setCargandoDatos] = useState(true)
 
   const [busqueda, setBusqueda] = useState('')
   const [procesandoId, setProcesandoId] = useState(null)
@@ -43,17 +35,13 @@ export default function VentaRapida() {
   const cargarDatos = async () => {
     setCargandoDatos(true)
     try {
-      const [resProd, resCat] = await Promise.all([
-        fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-        fetch(`${API_URL}/categorias`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-      ])
+      // page_size=5000: esta pantalla necesita el catálogo completo en
+      // memoria para poder buscar al vuelo mientras se escanea, como una
+      // caja registradora — no tiene sentido paginarla acá.
+      const resProd = await fetch(`${API_URL}/productos?page_size=5000`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       if (resProd.ok) {
         const data = await resProd.json()
-        if (Array.isArray(data)) setProductos(data)
-      }
-      if (resCat.ok) {
-        const data = await resCat.json()
-        if (Array.isArray(data)) setCategorias(data)
+        if (Array.isArray(data.items)) setProductos(data.items)
       }
     } catch (err) {
       console.error('Error al cargar catálogo:', err)
@@ -64,11 +52,12 @@ export default function VentaRapida() {
 
   useEffect(() => {
     cargarDatos()
+    cargarCategorias() // no dispara fetch si ya estaban cargadas por otro módulo
     if (inputBusquedaRef.current) inputBusquedaRef.current.focus()
   }, [])
 
-  // Auto-cierre — excepto "no_encontrado", que tiene botón de acción
-  // y necesita que el usuario decida qué hacer antes de que desaparezca
+  // Auto-cierre del mensaje flotante — excepto "no_encontrado", que tiene
+  // un botón de acción y necesita que el usuario decida qué hacer
   useEffect(() => {
     if (!notificacion || notificacion.tipo === 'no_encontrado') return
     const timer = setTimeout(() => setNotificacion(null), 4000)
@@ -324,16 +313,44 @@ export default function VentaRapida() {
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
-      <Alerta
-        tipo={notificacion ? mapearTipoAlerta(notificacion.tipo) : undefined}
-        mensaje={notificacion?.mensaje}
-        onCerrar={() => setNotificacion(null)}
-        accion={
-          notificacion?.tipo === 'no_encontrado'
-            ? { label: 'Agregar producto', onClick: () => irAAgregarProducto(notificacion.codigo) }
-            : undefined
-        }
-      />
+      {/* Mensaje flotante fijo arriba de la pantalla, por encima de todo */}
+      {notificacion && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-lg px-4">
+          <div className="p-4 rounded-xl text-sm font-medium flex items-center justify-between shadow-lg"
+            style={{
+              background: notificacion.tipo === 'ok' ? '#0f2e22'
+                : notificacion.tipo === 'minimo' ? '#3a2410'
+                : notificacion.tipo === 'no_encontrado' ? '#1a1a22'
+                : '#3a1414',
+              border: notificacion.tipo === 'ok' ? '1px solid rgba(16, 185, 129, 0.4)'
+                : notificacion.tipo === 'minimo' ? '1px solid rgba(249, 115, 22, 0.45)'
+                : notificacion.tipo === 'no_encontrado' ? '1px solid rgba(255,255,255,0.2)'
+                : '1px solid rgba(239, 68, 68, 0.45)',
+              color: notificacion.tipo === 'ok' ? '#34d399'
+                : notificacion.tipo === 'minimo' ? '#fb923c'
+                : notificacion.tipo === 'no_encontrado' ? '#d1d5db'
+                : '#f87171',
+            }}>
+            <span>
+              {notificacion.tipo === 'ok' && '✓ '}
+              {notificacion.tipo === 'minimo' && '⚠️ '}
+              {notificacion.tipo === 'error' && '✕ '}
+              {notificacion.tipo === 'no_encontrado' && '❓ '}
+              {notificacion.mensaje}
+            </span>
+            <div className="flex items-center gap-3 ml-4">
+              {notificacion.tipo === 'no_encontrado' && (
+                <button onClick={() => irAAgregarProducto(notificacion.codigo)}
+                  className="text-xs px-3 py-1.5 rounded-lg font-semibold"
+                  style={{ background: 'rgba(0,198,255,0.15)', border: '1px solid rgba(0,198,255,0.4)', color: '#00c6ff' }}>
+                  Agregar producto
+                </button>
+              )}
+              <button onClick={() => setNotificacion(null)} className="text-xs hover:opacity-75 font-semibold">Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <nav style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
         className="px-6 py-3 flex items-center justify-between">
@@ -354,15 +371,14 @@ export default function VentaRapida() {
         </div>
       </nav>
 
-      <main className="p-8 max-w-4xl mx-auto relative">
+      <main className="p-8 max-w-4xl mx-auto">
         {cargandoDatos && (
           <div className="absolute inset-0 flex items-center justify-center z-10"
-            style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
+             style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
             <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
               style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }} />
-          </div>
-        )}
-
+            </div>
+ )}
         <h2 className="text-xl font-semibold text-white mb-2">Venta Rápida</h2>
 
         <div className="flex gap-2 mb-6">

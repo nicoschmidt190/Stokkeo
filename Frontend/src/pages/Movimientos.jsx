@@ -1,12 +1,20 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import Alerta from '../components/Alerta'
-import ConfirmDialog from '../components/ConfirmDialog'
+import { useCategorias } from '../context/CategoriasContext'
+import { useDebounce } from '../hooks/useDebounce'
+import Paginador from '../components/Paginador'
 import logo from '../assets/logo.png'
 
+const PAGE_SIZE = 30
+
 const ETIQUETAS_UNIDAD = {
-  unidad: 'u', kg: 'kg', litros: 'L', gramos: 'gr', caja: 'cj', pack: 'pk',
+  unidad: 'u',
+  kg: 'kg',
+  litros: 'L',
+  gramos: 'gr',
+  caja: 'cj',
+  pack: 'pk',
 }
 const UNIDADES_DECIMALES = ['kg', 'litros']
 
@@ -25,98 +33,114 @@ const obtenerFechaHoraLocal = () => {
 }
 
 export default function Movimientos() {
-  const { logout } = useAuth()
+  const { usuario, logout } = useAuth()
   const navigate = useNavigate()
+  const { categorias, cargarCategorias } = useCategorias()
   const inputScannerRef = useRef(null)
   const fechaInicialRef = useRef(obtenerFechaHoraLocal())
 
   const [productos, setProductos] = useState([])
-  const [categorias, setCategorias] = useState([])
   const [movimientos, setMovimientos] = useState([])
   const [busquedaRapida, setBusquedaRapida] = useState('')
   const [cargandoDatos, setCargandoDatos] = useState(true)
 
   const [form, setForm] = useState({
-    id_producto: '', cantidad: '', tipo: 'Entrada', origen: 'Manual',
-    fecha_hora: fechaInicialRef.current, motivo: '', observaciones: '',
+    id_producto: '',
+    cantidad: '',
+    tipo: 'Entrada',
+    origen: 'Manual',
+    fecha_hora: fechaInicialRef.current,
+    motivo: '',
+    observaciones: '',
   })
 
+  const [erroresCampos, setErroresCampos] = useState({})
+  const [error, setError] = useState('')
+  const [mensajeExito, setMensajeExito] = useState('')
   const [cargando, setCargando] = useState(false)
 
-  const [notificacion, setNotificacion] = useState(null)
-  const mostrarAlerta = (tipo, mensaje) => setNotificacion({ tipo, mensaje })
-
-  useEffect(() => {
-    if (!notificacion) return
-    const t = setTimeout(() => setNotificacion(null), 4000)
-    return () => clearTimeout(t)
-  }, [notificacion])
-
-  // Confirmación de fecha modificada — reemplaza el window.confirm()
-  const [confirmFecha, setConfirmFecha] = useState(false)
-
+  // --- Filtros y orden del historial ---
   const [busquedaLista, setBusquedaLista] = useState('')
+  const busquedaListaDebounced = useDebounce(busquedaLista, 400)
   const [categoriaFiltro, setCategoriaFiltro] = useState('')
   const [fechaDesde, setFechaDesde] = useState('')
   const [fechaHasta, setFechaHasta] = useState('')
   const [orden, setOrden] = useState({ columna: 'fecha_hora', direccion: 'desc' })
+
+  const [page, setPage] = useState(1)
+  const [totalPaginas, setTotalPaginas] = useState(1)
+  const [totalItems, setTotalItems] = useState(0)
 
   const token = localStorage.getItem('token')
   const API_URL = import.meta.env.VITE_API_URL
 
   const cargarMovimientos = async () => {
     try {
-      const params = new URLSearchParams()
+      const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) })
       if (fechaDesde) params.set('desde', fechaDesde)
       if (fechaHasta) params.set('hasta', fechaHasta)
-      const qs = params.toString() ? `?${params.toString()}` : ''
+      if (busquedaListaDebounced.trim()) params.set('search', busquedaListaDebounced.trim())
+      if (categoriaFiltro) params.set('id_categoria', categoriaFiltro)
 
-      const res = await fetch(`${API_URL}/movimientos${qs}`, {
+      const res = await fetch(`${API_URL}/movimientos?${params}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
       if (res.ok) {
         const data = await res.json()
-        if (Array.isArray(data)) setMovimientos(data)
+        setMovimientos(Array.isArray(data.items) ? data.items : [])
+        setTotalPaginas(data.total_pages || 1)
+        setTotalItems(data.total || 0)
       }
     } catch (err) {
       console.error('Error al cargar movimientos:', err)
-      mostrarAlerta('error', 'Error al sincronizar el historial con el servidor.')
+      setError('Error al sincronizar el historial con el servidor.')
     }
   }
 
   const cargarDatosIniciales = async () => {
     setCargandoDatos(true)
     try {
-      const [resProd, resCat] = await Promise.all([
-        fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-        fetch(`${API_URL}/categorias`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
-      ])
+      // page_size=5000: el formulario de arriba necesita el catálogo
+      // completo para poder buscar el producto por nombre/código al
+      // registrar un movimiento — no tiene que ver con la paginación
+      // del historial de abajo.
+      const resProd = await fetch(`${API_URL}/productos?page_size=5000`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
       if (resProd.ok) {
         const dataProd = await resProd.json()
-        if (Array.isArray(dataProd)) setProductos(dataProd)
+        if (Array.isArray(dataProd.items)) setProductos(dataProd.items)
       }
-      if (resCat.ok) {
-        const dataCat = await resCat.json()
-        if (Array.isArray(dataCat)) setCategorias(dataCat)
-      }
+      cargarCategorias()
       await cargarMovimientos()
     } catch (err) {
       console.error('Error al cargar datos:', err)
-      mostrarAlerta('error', 'Error al sincronizar datos con el servidor.')
+      setError('Error al sincronizar datos con el servidor.')
     } finally {
       setCargandoDatos(false)
     }
   }
 
-  useEffect(() => { cargarDatosIniciales() }, [])
+  useEffect(() => {
+    cargarDatosIniciales()
+  }, [])
+
+  // Igual que en Productos/Stock: al cambiar cualquier filtro del
+  // historial, volvemos a la página 1.
+  useEffect(() => { setPage(1) }, [busquedaListaDebounced, categoriaFiltro, fechaDesde, fechaHasta])
 
   useEffect(() => {
     if (!cargandoDatos) cargarMovimientos()
-  }, [fechaDesde, fechaHasta])
+  }, [page, busquedaListaDebounced, categoriaFiltro, fechaDesde, fechaHasta])
 
-  const handleLogout = () => { logout(); navigate('/login') }
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
+  }
 
-  const productoSeleccionado = productos.find((p) => p.id_producto === parseInt(form.id_producto))
+  const productoSeleccionado = productos.find(
+    (p) => p.id_producto === parseInt(form.id_producto)
+  )
   const stockActual = productoSeleccionado?.stock?.cantidad ?? 0
   const unidadProducto = productoSeleccionado?.unidad_medida || 'unidad'
   const admiteDecimales = UNIDADES_DECIMALES.includes(unidadProducto)
@@ -126,15 +150,21 @@ export default function Movimientos() {
     const valLimpio = valor.trim().toLowerCase()
     if (!valLimpio) return
 
-    const matchBarcode = productos.find((p) => p.codigo_barras && p.codigo_barras.trim().toLowerCase() === valLimpio)
+    const matchBarcode = productos.find(
+      (p) => p.codigo_barras && p.codigo_barras.trim().toLowerCase() === valLimpio
+    )
     if (matchBarcode) {
       setForm((prev) => ({ ...prev, id_producto: matchBarcode.id_producto.toString(), origen: 'Scanner' }))
+      setErroresCampos((prev) => ({ ...prev, id_producto: false }))
+      setError('')
       return
     }
 
     const matchNombre = productos.find((p) => p.nombre.toLowerCase().includes(valLimpio))
     if (matchNombre) {
       setForm((prev) => ({ ...prev, id_producto: matchNombre.id_producto.toString(), origen: 'Manual' }))
+      setErroresCampos((prev) => ({ ...prev, id_producto: false }))
+      setError('')
     }
   }
 
@@ -143,7 +173,9 @@ export default function Movimientos() {
       e.preventDefault()
       const valLimpio = busquedaRapida.trim().toLowerCase()
       const match = productos.find(
-        (p) => (p.codigo_barras && p.codigo_barras.toLowerCase() === valLimpio) || p.nombre.toLowerCase() === valLimpio
+        (p) =>
+          (p.codigo_barras && p.codigo_barras.toLowerCase() === valLimpio) ||
+          p.nombre.toLowerCase() === valLimpio
       )
       if (match) {
         setForm((prev) => ({
@@ -151,21 +183,33 @@ export default function Movimientos() {
           id_producto: match.id_producto.toString(),
           origen: match.codigo_barras?.toLowerCase() === valLimpio ? 'Scanner' : 'Manual',
         }))
+        setErroresCampos((prev) => ({ ...prev, id_producto: false }))
         setBusquedaRapida('')
+        setError('')
       } else {
-        mostrarAlerta('advertencia', `No se encontró ningún producto con el código o nombre: "${busquedaRapida}"`)
+        setError(`No se encontró ningún producto con el código o nombre: "${busquedaRapida}"`)
       }
     }
   }
 
-  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value })
+  const handleChange = (e) => {
+    const { name, value } = e.target
+    setForm({ ...form, [name]: value })
+    setError('')
+    if (erroresCampos[name]) {
+      setErroresCampos((prev) => ({ ...prev, [name]: false }))
+    }
+  }
 
   const alternarTipo = () => {
     setForm((prev) => ({
       ...prev,
       tipo: prev.tipo === 'Entrada' ? 'Salida' : 'Entrada',
-      motivo: '', observaciones: '',
+      motivo: '',
+      observaciones: '',
     }))
+    setErroresCampos({})
+    setError('')
   }
 
   const fechaFueModificada = form.fecha_hora !== fechaInicialRef.current
@@ -174,42 +218,54 @@ export default function Movimientos() {
     const nuevaFechaInicial = obtenerFechaHoraLocal()
     fechaInicialRef.current = nuevaFechaInicial
     setForm((prev) => ({
-      id_producto: '', cantidad: '', tipo: prev.tipo, origen: 'Manual',
-      fecha_hora: nuevaFechaInicial, motivo: '', observaciones: '',
+      id_producto: '',
+      cantidad: '',
+      tipo: prev.tipo,
+      origen: 'Manual',
+      fecha_hora: nuevaFechaInicial,
+      motivo: '',
+      observaciones: '',
     }))
+    setErroresCampos({})
   }
 
-  // 1. Se dispara al enviar el formulario: valida y decide si hace falta confirmar la fecha
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
 
+    const errores = {}
     if (!form.id_producto) {
-      mostrarAlerta('advertencia', 'Tenés que seleccionar o escanear un producto')
-      return
+      errores.id_producto = true
     }
 
     const cant = parseFloat(form.cantidad)
     if (!form.cantidad || isNaN(cant) || cant <= 0) {
-      mostrarAlerta('advertencia', 'La cantidad debe ser un número mayor a 0')
+      errores.cantidad = true
+    }
+
+    if (Object.keys(errores).length > 0) {
+      setErroresCampos(errores)
+      setError('Completá los campos obligatorios marcados en rojo (*)')
       return
     }
 
     if (form.tipo === 'Salida' && cant > stockActual) {
-      mostrarAlerta('error', `No podés retirar ${cant} ${ETIQUETAS_UNIDAD[unidadProducto] || unidadProducto}: el stock disponible es de ${stockActual}`)
+      setErroresCampos({ cantidad: true })
+      setError(
+        `No podés retirar ${cant} ${ETIQUETAS_UNIDAD[unidadProducto] || unidadProducto}: el stock disponible es de ${stockActual}`
+      )
       return
     }
 
     if (fechaFueModificada) {
-      setConfirmFecha(true)
-      return
+      const confirmar = window.confirm(
+        'Modificaste la fecha del movimiento. ¿Estás seguro de que querés registrarlo con esa fecha?'
+      )
+      if (!confirmar) return
     }
 
-    registrarMovimiento(cant)
-  }
-
-  // 2. Se llama directo si la fecha no cambió, o después de confirmar el diálogo
-  const registrarMovimiento = async (cant) => {
     setCargando(true)
+    setError('')
+    setMensajeExito('')
 
     try {
       const body = {
@@ -219,7 +275,9 @@ export default function Movimientos() {
         origen: form.origen,
       }
 
-      if (fechaFueModificada) body.fecha_hora = new Date(form.fecha_hora).toISOString()
+      if (fechaFueModificada) {
+        body.fecha_hora = new Date(form.fecha_hora).toISOString()
+      }
       if (form.tipo === 'Salida') {
         body.motivo = form.motivo || null
         body.observaciones = form.observaciones.trim() || null
@@ -227,66 +285,73 @@ export default function Movimientos() {
 
       const res = await fetch(`${API_URL}/movimientos`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify(body),
       })
 
       const data = await res.json()
 
       if (!res.ok) {
-        mostrarAlerta('error', data.detail || 'Error al registrar el movimiento')
+        setError(data.detail || 'Error al registrar el movimiento')
         return
       }
 
       const nuevoTotal = form.tipo === 'Entrada' ? stockActual + cant : stockActual - cant
 
-      setMovimientos((prev) => [data, ...prev])
+      // El nuevo movimiento aparece arriba de todo (orden por fecha desc).
+      // Si no estábamos en la página 1, volvemos ahí para verlo; si ya
+      // estábamos, simplemente recargamos esa página.
+      if (page !== 1) {
+        setPage(1)
+      } else {
+        cargarMovimientos()
+      }
       setProductos((prev) =>
-        prev.map((p) => p.id_producto === parseInt(form.id_producto) ? { ...p, stock: { ...p.stock, cantidad: nuevoTotal } } : p)
+        prev.map((p) =>
+          p.id_producto === parseInt(form.id_producto)
+            ? { ...p, stock: { ...p.stock, cantidad: nuevoTotal } }
+            : p
+        )
       )
 
       const unidad = ETIQUETAS_UNIDAD[unidadProducto] || unidadProducto
       const accion = form.tipo === 'Entrada' ? 'sumaron' : 'retiraron'
-      const base = `Se ${accion} ${cant} ${unidad} de "${productoSeleccionado?.nombre}". Stock actual: ${nuevoTotal} ${unidad}`
+      let mensaje = `Se ${accion} ${cant} ${unidad} de "${productoSeleccionado?.nombre}". Stock actual: ${nuevoTotal} ${unidad}`
 
-      if (form.tipo === 'Salida' && nuevoTotal <= 0) {
-        mostrarAlerta('error', `${base} — El producto se quedó sin stock.`)
-      } else if (form.tipo === 'Salida' && nuevoTotal <= (productoSeleccionado?.stock_minimo ?? 0)) {
-        mostrarAlerta('advertencia', `${base} — El producto llegó a su stock mínimo.`)
-      } else {
-        mostrarAlerta('ok', base)
+      if (form.tipo === 'Salida' && nuevoTotal <= (productoSeleccionado?.stock_minimo ?? 0)) {
+        mensaje += nuevoTotal <= 0
+          ? ' — ⚠ El producto se quedó sin stock.'
+          : ' — ⚠ El producto llegó a su stock mínimo.'
       }
+
+      setMensajeExito(mensaje)
+      setTimeout(() => setMensajeExito(''), 5000)
 
       resetearFormulario()
       setBusquedaRapida('')
       if (inputScannerRef.current) inputScannerRef.current.focus()
+
     } catch (err) {
       console.error(err)
-      mostrarAlerta('error', 'Sin conexión al registrar el movimiento.')
+      setError('Sin conexión al registrar el movimiento.')
     } finally {
       setCargando(false)
     }
-  }
-
-  const confirmarFechaModificada = () => {
-    setConfirmFecha(false)
-    registrarMovimiento(parseFloat(form.cantidad))
   }
 
   const nuevoTotalPreview = form.cantidad && parseFloat(form.cantidad) > 0
     ? (form.tipo === 'Entrada' ? stockActual + parseFloat(form.cantidad) : stockActual - parseFloat(form.cantidad))
     : null
 
-  const movimientosFiltrados = movimientos.filter((m) => {
-    const textoLimpio = busquedaLista.trim().toLowerCase()
-    const nombreProd = m.producto?.nombre?.toLowerCase() || ''
-    const cumpleBusqueda = textoLimpio.length >= 3 ? nombreProd.includes(textoLimpio) : true
-    const cumpleCategoria = categoriaFiltro ? m.producto?.id_categoria === parseInt(categoriaFiltro) : true
-    return cumpleBusqueda && cumpleCategoria
-  })
-
-  const movimientosOrdenados = [...movimientosFiltrados].sort((a, b) => {
+  // El filtro por nombre, categoría y fechas ya se resolvió en el backend
+  // (query params de cargarMovimientos). Acá solo ordenamos la página
+  // actual, que es lo único que tenemos en memoria.
+  const movimientosOrdenados = [...movimientos].sort((a, b) => {
     let valorA, valorB
+
     switch (orden.columna) {
       case 'producto':
         valorA = a.producto?.nombre || ''
@@ -306,7 +371,10 @@ export default function Movimientos() {
   })
 
   const handleCambiarOrden = (columna) => {
-    setOrden((prev) => ({ columna, direccion: prev.columna === columna && prev.direccion === 'asc' ? 'desc' : 'asc' }))
+    setOrden((prev) => ({
+      columna,
+      direccion: prev.columna === columna && prev.direccion === 'asc' ? 'desc' : 'asc',
+    }))
   }
 
   const renderIconoOrden = (columna) => {
@@ -316,29 +384,26 @@ export default function Movimientos() {
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
-      <Alerta tipo={notificacion?.tipo} mensaje={notificacion?.mensaje} onCerrar={() => setNotificacion(null)} />
-
-      <ConfirmDialog
-        abierto={confirmFecha}
-        tipo="advertencia"
-        titulo="Fecha modificada"
-        mensaje="Modificaste la fecha del movimiento. ¿Estás seguro de que querés registrarlo con esa fecha?"
-        textoConfirmar="Sí, registrar"
-        onConfirmar={confirmarFechaModificada}
-        onCancelar={() => setConfirmFecha(false)}
-      />
-
-      <nav style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
-        className="px-6 py-3 flex items-center justify-between">
+      <nav
+        style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+        className="px-6 py-3 flex items-center justify-between"
+      >
         <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/dashboard')}>
           <img src={logo} alt="Stokkeo" className="h-12" />
         </div>
         <div className="flex items-center gap-4">
-          <button onClick={() => navigate('/dashboard')} className="text-sm px-3 py-1.5 rounded-lg font-medium transition-colors" style={{ color: '#9ca3af' }}>
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="text-sm px-4 py-2 rounded-lg font-medium transition-colors"
+            style={{ color: '#9ca3af' }}
+          >
             Dashboard
           </button>
-          <button onClick={handleLogout} className="text-sm px-3 py-1.5 rounded-lg font-medium transition-all duration-200"
-            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#d1d5db' }}>
+          <button
+            onClick={handleLogout}
+            className="text-sm px-4 py-2 rounded-lg font-medium transition-all duration-200"
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#d1d5db' }}
+          >
             Cerrar sesión
           </button>
         </div>
@@ -346,17 +411,33 @@ export default function Movimientos() {
 
       <main className="p-8 max-w-4xl mx-auto relative">
         {cargandoDatos && (
-          <div className="absolute inset-0 flex items-center justify-center z-10"
-            style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
-            <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }} />
+          <div
+            className="absolute inset-0 flex items-center justify-center z-10"
+            style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}
+          >
+            <div
+              className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }}
+            />
           </div>
         )}
 
         <h2 className="text-xl font-semibold text-white mb-4">Movimientos de Stock</h2>
 
-        <div className="rounded-xl p-6 mb-8" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        {mensajeExito && (
+          <div
+            className="mb-6 text-xs px-4 py-3 rounded-lg flex items-center justify-between transition-all"
+            style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', color: '#34d399' }}
+          >
+            <span>✓ {mensajeExito}</span>
+            <button onClick={() => setMensajeExito('')} className="text-xs hover:opacity-75 ml-2 text-emerald-400">✕</button>
+          </div>
+        )}
 
+        <div
+          className="rounded-xl p-6 mb-8"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+        >
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-medium text-white">
               {form.tipo === 'Entrada' ? 'Ingreso de Mercadería' : 'Salida de Mercadería'}
@@ -368,13 +449,16 @@ export default function Movimientos() {
             )}
           </div>
 
-          <button type="button" onClick={alternarTipo}
+          <button
+            type="button"
+            onClick={alternarTipo}
             className="w-full text-sm py-2.5 rounded-lg font-semibold mb-4 transition-colors"
             style={{
               background: form.tipo === 'Entrada' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
               border: form.tipo === 'Entrada' ? '1px solid rgba(16,185,129,0.4)' : '1px solid rgba(239,68,68,0.4)',
               color: form.tipo === 'Entrada' ? '#34d399' : '#f87171',
-            }}>
+            }}
+          >
             {form.tipo === 'Entrada' ? '⬇ Entrada' : '⬆ Salida'} — tocá para cambiar a {form.tipo === 'Entrada' ? 'Salida' : 'Entrada'}
           </button>
 
@@ -395,14 +479,28 @@ export default function Movimientos() {
           </div>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Selección de Producto */}
             <div className="flex flex-col gap-1">
-              <label className="text-xs" style={{ color: '#9ca3af' }}>Seleccionar Producto *</label>
+              <label
+                className="text-xs"
+                style={{ color: erroresCampos.id_producto ? '#f87171' : '#9ca3af' }}
+              >
+                Seleccionar Producto *
+              </label>
               <select
                 name="id_producto"
                 value={form.id_producto}
-                onChange={(e) => { handleChange(e); setForm((prev) => ({ ...prev, origen: 'Manual' })) }}
-                className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
-                style={{ background: '#121218', border: '1px solid rgba(255,255,255,0.1)' }}
+                onChange={(e) => {
+                  handleChange(e)
+                  setForm((prev) => ({ ...prev, origen: 'Manual' }))
+                }}
+                className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none transition-all"
+                style={{
+                  background: '#121218',
+                  border: erroresCampos.id_producto
+                    ? '1px solid #ef4444'
+                    : '1px solid rgba(255,255,255,0.1)',
+                }}
               >
                 <option value="">-- Seleccionar de la lista --</option>
                 {productos.map((p) => (
@@ -413,8 +511,12 @@ export default function Movimientos() {
               </select>
             </div>
 
+            {/* Cantidad */}
             <div className="flex flex-col gap-1">
-              <label className="text-xs" style={{ color: '#9ca3af' }}>
+              <label
+                className="text-xs"
+                style={{ color: erroresCampos.cantidad ? '#f87171' : '#9ca3af' }}
+              >
                 Cantidad a {form.tipo === 'Entrada' ? 'sumar' : 'retirar'} *
               </label>
               <div className="relative">
@@ -427,8 +529,13 @@ export default function Movimientos() {
                   placeholder={admiteDecimales ? '0.00' : '0'}
                   value={form.cantidad}
                   onChange={handleChange}
-                  className="w-full pl-3 pr-12 py-2 rounded-lg text-sm text-white focus:outline-none"
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                  className="w-full pl-3 pr-12 py-2 rounded-lg text-sm text-white focus:outline-none transition-all font-mono"
+                  style={{
+                    background: 'rgba(255,255,255,0.05)',
+                    border: erroresCampos.cantidad
+                      ? '1px solid #ef4444'
+                      : '1px solid rgba(255,255,255,0.1)',
+                  }}
                 />
                 <span className="absolute right-3 top-2.5 text-xs text-cyan-400 font-semibold pointer-events-none select-none">
                   {ETIQUETAS_UNIDAD[unidadProducto] || unidadProducto}
@@ -436,9 +543,10 @@ export default function Movimientos() {
               </div>
             </div>
 
+            {/* Fecha del movimiento */}
             <div className="flex flex-col gap-1">
               <label className="text-xs" style={{ color: '#9ca3af' }}>
-                Fecha y hora {fechaFueModificada && <span style={{ color: '#facc15' }}>(modificada)</span>}
+                Fecha y hora {fechaFueModificada && <span style={{ color: '#fb923c' }}>(modificada)</span>}
               </label>
               <input
                 type="datetime-local"
@@ -448,11 +556,12 @@ export default function Movimientos() {
                 className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
                 style={{
                   background: 'rgba(255,255,255,0.05)',
-                  border: fechaFueModificada ? '1px solid rgba(234,179,8,0.4)' : '1px solid rgba(255,255,255,0.1)',
+                  border: fechaFueModificada ? '1px solid rgba(249,115,22,0.4)' : '1px solid rgba(255,255,255,0.1)',
                 }}
               />
             </div>
 
+            {/* Motivo y observaciones (Salida) */}
             {form.tipo === 'Salida' && (
               <>
                 <div className="flex flex-col gap-1">
@@ -486,8 +595,10 @@ export default function Movimientos() {
             )}
 
             {productoSeleccionado && (
-              <div className="md:col-span-2 p-3 rounded-lg flex items-center justify-between text-xs"
-                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <div
+                className="md:col-span-2 p-3 rounded-lg flex items-center justify-between text-xs"
+                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+              >
                 <div className="flex flex-col gap-0.5">
                   <span className="text-white font-medium">{productoSeleccionado.nombre}</span>
                   <span style={{ color: '#6b7280' }}>
@@ -505,11 +616,13 @@ export default function Movimientos() {
                   </div>
                   {nuevoTotalPreview !== null && (
                     <div>
-                      <span className="block" style={{ color: nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#facc15' : '#34d399' }}>
+                      <span className="block" style={{ color: nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#fb923c' : '#34d399' }}>
                         Nuevo Total
                       </span>
-                      <span className="text-sm font-bold"
-                        style={{ color: nuevoTotalPreview <= 0 ? '#f87171' : nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#facc15' : '#34d399' }}>
+                      <span
+                        className="text-sm font-bold"
+                        style={{ color: nuevoTotalPreview < 0 ? '#f87171' : nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#fb923c' : '#34d399' }}
+                      >
                         {nuevoTotalPreview}
                       </span>
                     </div>
@@ -518,16 +631,30 @@ export default function Movimientos() {
               </div>
             )}
 
+            {error && (
+              <div
+                className="md:col-span-2 text-xs px-3 py-2 rounded-lg"
+                style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171' }}
+              >
+                {error}
+              </div>
+            )}
+
             <div className="md:col-span-2 mt-2">
               <button
                 type="submit"
                 disabled={cargando}
                 className="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center justify-center gap-2"
-                style={{ background: 'linear-gradient(135deg, #00c6ff, #39ff14)', color: '#0a0a0f' }}
+                style={{
+                  background: 'linear-gradient(135deg, #00c6ff, #39ff14)',
+                  color: '#0a0a0f',
+                }}
               >
                 {cargando && (
-                  <span className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin"
-                    style={{ borderColor: 'rgba(10,10,15,0.3)', borderTopColor: '#0a0a0f' }} />
+                  <span
+                    className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin"
+                    style={{ borderColor: 'rgba(10,10,15,0.3)', borderTopColor: '#0a0a0f' }}
+                  />
                 )}
                 {cargando ? 'Registrando...' : `Registrar ${form.tipo}`}
               </button>
@@ -535,15 +662,18 @@ export default function Movimientos() {
           </form>
         </div>
 
-        <div className="rounded-xl p-6" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-
+        {/* Historial */}
+        <div
+          className="rounded-xl p-6"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+        >
           <div className="flex flex-col gap-3 mb-6">
             <h3 className="text-lg font-medium text-white">Historial de Movimientos</h3>
 
             <div className="flex flex-wrap gap-3">
               <input
                 type="text"
-                placeholder="Buscar por producto (mín. 3 letras)..."
+                placeholder="Buscar por producto..."
                 value={busquedaLista}
                 onChange={(e) => setBusquedaLista(e.target.value)}
                 className="px-3 py-1.5 rounded-lg text-sm text-white focus:outline-none"
@@ -563,17 +693,27 @@ export default function Movimientos() {
 
               <div className="flex items-center gap-2 text-xs" style={{ color: '#9ca3af' }}>
                 <span>Desde</span>
-                <input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)}
+                <input
+                  type="date"
+                  value={fechaDesde}
+                  onChange={(e) => setFechaDesde(e.target.value)}
                   className="px-2 py-1.5 rounded-lg text-sm text-white focus:outline-none"
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} />
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                />
                 <span>Hasta</span>
-                <input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)}
+                <input
+                  type="date"
+                  value={fechaHasta}
+                  onChange={(e) => setFechaHasta(e.target.value)}
                   className="px-2 py-1.5 rounded-lg text-sm text-white focus:outline-none"
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} />
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                />
                 {(fechaDesde || fechaHasta) && (
-                  <button onClick={() => { setFechaDesde(''); setFechaHasta('') }}
+                  <button
+                    onClick={() => { setFechaDesde(''); setFechaHasta('') }}
                     className="text-xs px-2 py-1 rounded-md"
-                    style={{ background: 'rgba(255,255,255,0.06)', color: '#9ca3af' }}>
+                    style={{ background: 'rgba(255,255,255,0.06)', color: '#9ca3af' }}
+                  >
                     Limpiar
                   </button>
                 )}
@@ -607,26 +747,32 @@ export default function Movimientos() {
                 {movimientosOrdenados.length === 0 ? (
                   <tr>
                     <td colSpan="6" className="py-6 text-center text-xs" style={{ color: '#6b7280' }}>
-                      No hay movimientos que coincidan con los filtros.
+                      {totalItems === 0 ? 'No hay movimientos que coincidan con los filtros.' : 'No se encontraron movimientos que coincidan.'}
                     </td>
                   </tr>
                 ) : (
                   movimientosOrdenados.map((m, i) => {
                     const unidad = ETIQUETAS_UNIDAD[m.producto?.unidad_medida] || m.producto?.unidad_medida || ''
                     return (
-                      <tr key={m.id_movimiento}
-                        style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: i % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent' }}
+                      <tr
+                        key={m.id_movimiento}
+                        style={{
+                          borderBottom: '1px solid rgba(255,255,255,0.04)',
+                          background: i % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent',
+                        }}
                         title={m.observaciones || ''}
                       >
                         <td className="py-3 px-3" style={{ color: '#9ca3af' }}>{new Date(m.fecha_hora).toLocaleString()}</td>
                         <td className="py-3 px-3 font-medium text-white">{m.producto?.nombre || `Producto #${m.id_producto}`}</td>
                         <td className="py-3 px-3">
-                          <span className="text-xs px-2.5 py-0.5 rounded-full font-medium"
+                          <span
+                            className="text-xs px-2.5 py-0.5 rounded-full font-medium"
                             style={{
                               background: m.tipo === 'Entrada' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
                               border: m.tipo === 'Entrada' ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
                               color: m.tipo === 'Entrada' ? '#34d399' : '#f87171',
-                            }}>
+                            }}
+                          >
                             {m.tipo}
                           </span>
                         </td>
@@ -644,6 +790,8 @@ export default function Movimientos() {
               </tbody>
             </table>
           </div>
+
+          <Paginador page={page} totalPages={totalPaginas} total={totalItems} pageSize={PAGE_SIZE} onCambiarPagina={setPage} />
         </div>
       </main>
     </div>

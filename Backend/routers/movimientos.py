@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import text, func
 from typing import List, Optional
 from datetime import date, datetime, time
 from pydantic import BaseModel, Field
@@ -7,6 +8,7 @@ from database import get_db
 from models.movimiento import Movimiento
 from models.producto import Producto, Stock
 from schemas.movimiento import MovimientoCreate, MovimientoResponse
+from schemas.pagination import PaginatedResponse
 
 router = APIRouter(prefix="/movimientos", tags=["movimientos"])
 
@@ -26,17 +28,21 @@ class VentaRapidaResponse(BaseModel):
 
 
 # --- ENDPOINTS ---
-@router.get("", response_model=List[MovimientoResponse])
+@router.get("", response_model=PaginatedResponse[MovimientoResponse])
 def listar_movimientos(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(30, ge=1, le=200),
     desde: Optional[date] = Query(None, description="Filtra movimientos desde esta fecha (inclusive)"),
     hasta: Optional[date] = Query(None, description="Filtra movimientos hasta esta fecha (inclusive)"),
+    search: Optional[str] = Query(None, description="Filtra por nombre de producto"),
+    id_categoria: Optional[int] = Query(None),
     db: Session = Depends(get_db)
 ):
-    # MovimientoResponse anida producto -> categoria y producto -> stock.
-    # Sin este eager load, por cada movimiento se disparaban 3 queries extra
-    # (producto, categoria, stock) contra Supabase: con 50 movimientos eran
-    # ~150 round-trips en vez de 1. joinedload junta todo en una sola query
-    # con LEFT JOIN.
+    # Movimientos es la tabla que más crece con el tiempo (nunca se
+    # "estabiliza" como el catálogo de productos), así que es la que más
+    # necesita paginación server-side. MovimientoResponse anida producto ->
+    # categoria y producto -> stock; sin joinedload, cada fila dispara 3
+    # queries extra contra Supabase (N+1).
     query = db.query(Movimiento).options(
         joinedload(Movimiento.producto).joinedload(Producto.categoria),
         joinedload(Movimiento.producto).joinedload(Producto.stock),
@@ -46,8 +52,30 @@ def listar_movimientos(
         query = query.filter(Movimiento.fecha_hora >= datetime.combine(desde, time.min))
     if hasta:
         query = query.filter(Movimiento.fecha_hora <= datetime.combine(hasta, time.max))
+    if search or id_categoria:
+        # join implícito vía el FK: solo cuando hace falta filtrar por algo
+        # del producto (nombre o categoría), sin traer todos los
+        # movimientos primero.
+        query = query.join(Producto, Producto.id_producto == Movimiento.id_producto)
+        if search:
+            query = query.filter(Producto.nombre.ilike(f"%{search.strip()}%"))
+        if id_categoria:
+            query = query.filter(Producto.id_categoria == id_categoria)
 
-    return query.order_by(Movimiento.fecha_hora.desc()).all()
+    total = query.with_entities(func.count(Movimiento.id_movimiento)).scalar()
+
+    items = (
+        query.order_by(Movimiento.fecha_hora.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+
+    return PaginatedResponse(
+        items=items, total=total, page=page, page_size=page_size, total_pages=total_pages
+    )
 
 
 @router.post("", response_model=MovimientoResponse, status_code=status.HTTP_201_CREATED)
@@ -118,42 +146,53 @@ def registrar_movimiento(movimiento_in: MovimientoCreate, db: Session = Depends(
 
 @router.post("/venta-rapida", response_model=VentaRapidaResponse)
 def registrar_venta_rapida(payload: VentaRapidaRequest, db: Session = Depends(get_db)):
-    # 1 sola query (antes eran 2: producto y stock por separado). Achica
-    # el tiempo entre "escanear" y "ver la confirmación" en la pantalla.
-    producto = (
-        db.query(Producto)
-        .options(joinedload(Producto.stock))
-        .filter(Producto.id_producto == payload.id_producto)
-        .first()
-    )
-    if not producto:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Código o producto no registrado en el catálogo"
-        )
+    # ---- Camino feliz: 1 sola sentencia para todo (antes eran 3: SELECT,
+    # UPDATE y INSERT, más el COMMIT = 4 round-trips por escaneo). Este
+    # encadenado de CTEs descuenta el stock, valida que no quede negativo,
+    # inserta el movimiento y trae los datos del producto, todo en un único
+    # viaje de ida y vuelta a Supabase.
+    resultado = db.execute(
+        text("""
+            WITH decremento AS (
+                UPDATE stock
+                SET cantidad = cantidad - 1
+                WHERE id_producto = :id_producto AND cantidad > 0
+                RETURNING id_producto, cantidad
+            ),
+            registro AS (
+                INSERT INTO movimiento (id_producto, tipo, origen, cantidad)
+                SELECT id_producto, 'Salida', :origen, 1 FROM decremento
+                RETURNING id_producto
+            )
+            SELECT p.id_producto, p.nombre, p.stock_minimo, d.cantidad AS stock_restante
+            FROM decremento d
+            JOIN producto p ON p.id_producto = d.id_producto
+        """),
+        {"id_producto": payload.id_producto, "origen": payload.origen},
+    ).first()
 
-    stock = producto.stock
-    stock_actual = float(stock.cantidad) if stock else 0.0
-
-    if stock_actual <= 0:
+    if resultado is None:
+        # No se pudo descontar: o el producto no existe, o no tenía stock.
+        # Esta rama solo se ejecuta en el caso raro (no en cada escaneo
+        # exitoso), así que el costo extra de una segunda query acá no
+        # afecta el flujo normal de venta.
+        db.rollback()
+        producto = db.query(Producto).filter(Producto.id_producto == payload.id_producto).first()
+        if not producto:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Código o producto no registrado en el catálogo"
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Sin stock disponible para este producto"
         )
 
-    stock.cantidad = stock_actual - 1
-    nuevo_stock = float(stock.cantidad)
-
-    movimiento = Movimiento(
-        id_producto=payload.id_producto,
-        tipo="Salida",
-        origen=payload.origen,
-        cantidad=1
-    )
-    db.add(movimiento)
     db.commit()
 
-    stock_minimo = float(producto.stock_minimo)
+    nuevo_stock = float(resultado.stock_restante)
+    stock_minimo = float(resultado.stock_minimo)
+    nombre = resultado.nombre
 
     if nuevo_stock <= 0:
         estado = "sin_stock"
@@ -163,11 +202,11 @@ def registrar_venta_rapida(payload: VentaRapidaRequest, db: Session = Depends(ge
         mensaje = f"Stock mínimo alcanzado - Quedan {nuevo_stock} unidades"
     else:
         estado = "ok"
-        mensaje = f"{producto.nombre} vendido - Stock restante: {nuevo_stock}"
+        mensaje = f"{nombre} vendido - Stock restante: {nuevo_stock}"
 
     return VentaRapidaResponse(
-        id_producto=producto.id_producto,
-        nombre=producto.nombre,
+        id_producto=resultado.id_producto,
+        nombre=nombre,
         stock_restante=nuevo_stock,
         stock_minimo=stock_minimo,
         estado=estado,

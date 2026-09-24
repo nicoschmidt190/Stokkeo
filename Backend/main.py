@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 import traceback
 from database import engine
@@ -26,6 +27,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Comprime las respuestas JSON (gzip) antes de mandarlas por la red.
+# Con wifi lento/inestable esto es una de las mejoras de mayor impacto:
+# menos bytes viajando = menos chance de que un paquete se pierda o
+# haya que retransmitir, y la respuesta llega antes aunque el ancho de
+# banda sea chico. minimum_size evita comprimir respuestas ya diminutas.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 @app.middleware("http")
 async def catch_exceptions(request: Request, call_next):

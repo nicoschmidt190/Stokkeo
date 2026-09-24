@@ -2,7 +2,11 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useCategorias } from '../context/CategoriasContext'
+import { useDebounce } from '../hooks/useDebounce'
+import Paginador from '../components/Paginador'
 import logo from '../assets/logo.png'
+
+const PAGE_SIZE = 30
 
 const ETIQUETAS_UNIDAD = {
   unidad: 'u',
@@ -41,8 +45,13 @@ export default function Stock() {
   const [error, setError] = useState('')
 
   const [busqueda, setBusqueda] = useState('')
+  const busquedaDebounced = useDebounce(busqueda, 400)
   const [categoriaFiltro, setCategoriaFiltro] = useState('')
   const [orden, setOrden] = useState({ columna: 'nombre', direccion: 'asc' })
+
+  const [page, setPage] = useState(1)
+  const [totalPaginas, setTotalPaginas] = useState(1)
+  const [totalItems, setTotalItems] = useState(0)
 
   const token = localStorage.getItem('token')
   const API_URL = import.meta.env.VITE_API_URL
@@ -50,9 +59,19 @@ export default function Stock() {
   const cargarDatos = async () => {
     setCargando(true)
     try {
-      const resStock = await fetch(`${API_URL}/stock`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      if (resStock.ok) setStock(await resStock.json())
-      else setError('No se pudo cargar el stock')
+      const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) })
+      if (busquedaDebounced.trim()) params.set('search', busquedaDebounced.trim())
+      if (categoriaFiltro) params.set('id_categoria', categoriaFiltro)
+
+      const resStock = await fetch(`${API_URL}/stock?${params}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      if (resStock.ok) {
+        const data = await resStock.json()
+        setStock(Array.isArray(data.items) ? data.items : [])
+        setTotalPaginas(data.total_pages || 1)
+        setTotalItems(data.total || 0)
+      } else {
+        setError('No se pudo cargar el stock')
+      }
     } catch {
       setError('Sin conexión al cargar el stock')
     } finally {
@@ -60,10 +79,12 @@ export default function Stock() {
     }
   }
 
+  useEffect(() => { setPage(1) }, [busquedaDebounced, categoriaFiltro])
+
   useEffect(() => {
     cargarDatos()
     cargarCategorias() // no dispara fetch si ya estaban cargadas por otro módulo
-  }, [])
+  }, [page, busquedaDebounced, categoriaFiltro])
 
   const handleLogout = () => { logout(); navigate('/login') }
 
@@ -75,16 +96,9 @@ export default function Stock() {
     })
   }
 
-  // --- Filtrado por nombre (desde 3 caracteres) y categoría ---
-  const stockFiltrado = stock.filter((s) => {
-    const textoLimpio = busqueda.trim().toLowerCase()
-    const cumpleBusqueda = textoLimpio.length >= 3 ? s.nombre.toLowerCase().includes(textoLimpio) : true
-    const cumpleCategoria = categoriaFiltro ? s.categoria?.id_categoria === parseInt(categoriaFiltro) : true
-    return cumpleBusqueda && cumpleCategoria
-  })
-
-  // --- Orden por columna, ascendente/descendente ---
-  const stockOrdenado = [...stockFiltrado].sort((a, b) => {
+  // El filtro por nombre y categoría ya se resolvió en el backend (query
+  // params de cargarDatos). Acá solo ordenamos la página actual.
+  const stockOrdenado = [...stock].sort((a, b) => {
     let valorA = a[orden.columna]
     let valorB = b[orden.columna]
 
@@ -163,7 +177,7 @@ export default function Stock() {
             <div className="flex flex-col sm:flex-row gap-3">
               <input
                 type="text"
-                placeholder="Buscar por nombre (mín. 3 letras)..."
+                placeholder="Buscar por nombre..."
                 value={busqueda}
                 onChange={(e) => setBusqueda(e.target.value)}
                 className="px-3 py-1.5 rounded-lg text-sm text-white focus:outline-none"
@@ -208,7 +222,7 @@ export default function Stock() {
                 {stockOrdenado.length === 0 ? (
                   <tr>
                     <td colSpan="5" className="py-6 text-center text-xs" style={{ color: '#6b7280' }}>
-                      {stock.length === 0 ? 'No hay productos con stock registrado.' : 'No se encontraron productos que coincidan.'}
+                      {totalItems === 0 ? 'No hay productos con stock registrado.' : 'No se encontraron productos que coincidan.'}
                     </td>
                   </tr>
                 ) : (
@@ -233,6 +247,8 @@ export default function Stock() {
               </tbody>
             </table>
           </div>
+
+          <Paginador page={page} totalPages={totalPaginas} total={totalItems} pageSize={PAGE_SIZE} onCambiarPagina={setPage} />
         </div>
       </main>
     </div>
