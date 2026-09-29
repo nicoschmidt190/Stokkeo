@@ -1,12 +1,9 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { useCategorias } from '../context/CategoriasContext'
-import { useDebounce } from '../hooks/useDebounce'
-import Paginador from '../components/Paginador'
+import Alerta from '../components/Alerta'
+import ConfirmDialog from '../components/ConfirmDialog'
 import logo from '../assets/logo.png'
-
-const PAGE_SIZE = 30
 
 const UNIDADES_MEDIDA = [
   { valor: 'unidad', label: 'Unidades (u)', esDecimal: false },
@@ -18,50 +15,46 @@ const UNIDADES_MEDIDA = [
 ]
 
 const ETIQUETAS_UNIDAD = {
-  unidad: 'u',
-  kg: 'kg',
-  litros: 'L',
-  gramos: 'gr',
-  caja: 'cj',
-  pack: 'pk',
+  unidad: 'u', kg: 'kg', litros: 'L', gramos: 'gr', caja: 'cj', pack: 'pk',
 }
 
 export default function Productos() {
   const { usuario, logout } = useAuth()
   const navigate = useNavigate()
-  const { categorias, cargarCategorias } = useCategorias()
+  const location = useLocation()
 
   const [productos, setProductos] = useState([])
+  const [categorias, setCategorias] = useState([])
   const [editando, setEditando] = useState(null)
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
   const [cargandoDatos, setCargandoDatos] = useState(true)
 
   const [busqueda, setBusqueda] = useState('')
-  const busquedaDebounced = useDebounce(busqueda, 400)
-  const [mensajeExito, setMensajeExito] = useState('')
   const [categoriaFiltro, setCategoriaFiltro] = useState('')
   const [orden, setOrden] = useState({ columna: 'nombre', direccion: 'asc' })
 
-  const [page, setPage] = useState(1)
-  const [totalPaginas, setTotalPaginas] = useState(1)
-  const [totalItems, setTotalItems] = useState(0)
-
   const [form, setForm] = useState({
-    nombre: '',
-    precioCosto: '',
-    stock_actual: '',
-    stock_minimo: '',
-    unidad_medida: 'unidad',
-    codigo_barras: '',
-    id_categoria: '',
+    nombre: '', precioCosto: '', stock_actual: '', stock_minimo: '',
+    unidad_medida: 'unidad', codigo_barras: '', id_categoria: '',
   })
   const [precioVisible, setPrecioVisible] = useState('')
   const [stockActualVisible, setStockActualVisible] = useState('')
   const [stockMinimoVisible, setStockMinimoVisible] = useState('')
 
   const [erroresCampos, setErroresCampos] = useState({})
-  const [error, setError] = useState('')
+  const [avisoCodigoBarras, setAvisoCodigoBarras] = useState('')
   const [cargando, setCargando] = useState(false)
+
+  const [notificacion, setNotificacion] = useState(null)
+  const mostrarAlerta = (tipo, mensaje) => setNotificacion({ tipo, mensaje })
+
+  useEffect(() => {
+    if (!notificacion) return
+    const t = setTimeout(() => setNotificacion(null), 4000)
+    return () => clearTimeout(t)
+  }, [notificacion])
+
+  const [confirmEliminar, setConfirmEliminar] = useState(null)
 
   const token = localStorage.getItem('token')
   const API_URL = import.meta.env.VITE_API_URL
@@ -69,16 +62,17 @@ export default function Productos() {
   const cargarDatos = async () => {
     setCargandoDatos(true)
     try {
-      const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) })
-      if (busquedaDebounced.trim()) params.set('search', busquedaDebounced.trim())
-      if (categoriaFiltro) params.set('id_categoria', categoriaFiltro)
-
-      const resProd = await fetch(`${API_URL}/productos?${params}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      const [resProd, resCat] = await Promise.all([
+        fetch(`${API_URL}/productos`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
+        fetch(`${API_URL}/categorias`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
+      ])
       if (resProd.ok) {
-        const data = await resProd.json()
-        setProductos(Array.isArray(data.items) ? data.items : [])
-        setTotalPaginas(data.total_pages || 1)
-        setTotalItems(data.total || 0)
+        const dataProd = await resProd.json()
+        if (Array.isArray(dataProd)) setProductos(dataProd)
+      }
+      if (resCat.ok) {
+        const dataCat = await resCat.json()
+        if (Array.isArray(dataCat)) setCategorias(dataCat)
       }
     } catch (err) {
       console.error('Error al cargar datos:', err)
@@ -87,20 +81,16 @@ export default function Productos() {
     }
   }
 
-  // Al cambiar el buscador o el filtro de categoría, siempre volvemos a la
-  // página 1 — si estabas en la página 5 y filtrás, no tiene sentido seguir
-  // ahí (podría ni existir esa página para el nuevo resultado).
-  useEffect(() => { setPage(1) }, [busquedaDebounced, categoriaFiltro])
+  useEffect(() => { cargarDatos() }, [])
 
   useEffect(() => {
-    cargarDatos()
-    cargarCategorias() // no dispara fetch si ya estaban cargadas por otro módulo
-  }, [page, busquedaDebounced, categoriaFiltro])
+    if (location.state?.codigoBarrasPendiente) {
+      setForm((prev) => ({ ...prev, codigo_barras: location.state.codigoBarrasPendiente }))
+      setMostrarFormulario(true)
+    }
+  }, [location.state])
 
-  const handleLogout = () => {
-    logout()
-    navigate('/login')
-  }
+  const handleLogout = () => { logout(); navigate('/login') }
 
   const admiteDecimales = (unidad) => {
     const config = UNIDADES_MEDIDA.find((u) => u.valor === unidad)
@@ -126,10 +116,7 @@ export default function Productos() {
     const valorDecimal = (parseInt(soloNumeros, 10) / 100).toFixed(2)
     setForm((prev) => ({ ...prev, precioCosto: valorDecimal }))
     setPrecioVisible(
-      Number(valorDecimal).toLocaleString('es-AR', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })
+      Number(valorDecimal).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     )
     if (erroresCampos.precioCosto) setErroresCampos((prev) => ({ ...prev, precioCosto: false }))
   }
@@ -147,12 +134,7 @@ export default function Productos() {
     if (esDecimal) {
       const valorDecimal = (parseInt(soloNumeros, 10) / 100).toFixed(2)
       setForm((prev) => ({ ...prev, [campo]: valorDecimal }))
-      setVisible(
-        Number(valorDecimal).toLocaleString('es-AR', {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        })
-      )
+      setVisible(Number(valorDecimal).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
     } else {
       const valorEntero = parseInt(soloNumeros, 10).toString()
       setForm((prev) => ({ ...prev, [campo]: valorEntero }))
@@ -165,42 +147,28 @@ export default function Productos() {
   const handleCambioUnidad = (e) => {
     const nuevaUnidad = e.target.value
     setForm((prev) => ({ ...prev, unidad_medida: nuevaUnidad }))
-    if (form.stock_actual !== '') {
-      setStockActualVisible(formatearStockValor(form.stock_actual, nuevaUnidad))
-    }
-    if (form.stock_minimo !== '') {
-      setStockMinimoVisible(formatearStockValor(form.stock_minimo, nuevaUnidad))
-    }
+    if (form.stock_actual !== '') setStockActualVisible(formatearStockValor(form.stock_actual, nuevaUnidad))
+    if (form.stock_minimo !== '') setStockMinimoVisible(formatearStockValor(form.stock_minimo, nuevaUnidad))
   }
 
   const handleChange = (e) => {
     const { name, value } = e.target
     setForm({ ...form, [name]: value })
-    setError('')
 
     if (erroresCampos[name]) setErroresCampos((prev) => ({ ...prev, [name]: false }))
 
-    if (name === 'codigo_barras' && value.trim()) {
-      // Ojo: `productos` ahora es solo la página visible (30 productos), no
-      // todo el catálogo. Este chequeo es un aviso rápido "por las dudas",
-      // no la validación real — la que manda es la del backend al guardar,
-      // que sí compara contra todos los productos.
+    if (name === 'codigo_barras') {
+      if (!value.trim()) { setAvisoCodigoBarras(''); return }
       const codigoNormalizado = value.trim().toLowerCase()
       const duplicado = productos.find(
-        (p) =>
-          p.codigo_barras &&
-          p.codigo_barras.trim().toLowerCase() === codigoNormalizado &&
+        (p) => p.codigo_barras && p.codigo_barras.trim().toLowerCase() === codigoNormalizado &&
           (!editando || p.id_producto !== editando.id_producto)
       )
-      if (duplicado) setError(`El código ya está asignado al producto "${duplicado.nombre}"`)
+      setAvisoCodigoBarras(duplicado ? `El código ya está asignado al producto "${duplicado.nombre}"` : '')
     }
   }
 
   const handleGenerarCodigoInterno = () => {
-    // Mismo caveat que en handleChange: `productos` es solo la página
-    // visible. Con un espacio aleatorio de 90 millones de combinaciones,
-    // el riesgo de colisión es igualmente insignificante, y el backend
-    // rechaza duplicados igual si llegara a pasar.
     let codigoNuevo = ''
     let existe = true
     while (existe) {
@@ -209,25 +177,26 @@ export default function Productos() {
       existe = productos.some((p) => p.codigo_barras === codigoNuevo)
     }
     setForm((prev) => ({ ...prev, codigo_barras: codigoNuevo }))
-    setError('')
+    setAvisoCodigoBarras('')
   }
 
-  const handleAbrirNuevo = () => {
+  // Limpia el formulario a valores en blanco, PERO NO cierra el formulario —
+  // cerrar es una decisión exclusiva del usuario (Cancelar / ✕ Cerrar)
+  const limpiarFormulario = () => {
     setEditando(null)
     setForm({
-      nombre: '',
-      precioCosto: '',
-      stock_actual: '0',
-      stock_minimo: '',
-      unidad_medida: 'unidad',
-      codigo_barras: '',
-      id_categoria: '',
+      nombre: '', precioCosto: '', stock_actual: '0', stock_minimo: '',
+      unidad_medida: 'unidad', codigo_barras: '', id_categoria: '',
     })
     setPrecioVisible('')
     setStockActualVisible('0')
     setStockMinimoVisible('')
     setErroresCampos({})
-    setError('')
+    setAvisoCodigoBarras('')
+  }
+
+  const handleAbrirNuevo = () => {
+    limpiarFormulario()
     setMostrarFormulario(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -240,12 +209,8 @@ export default function Productos() {
     const unidad = p.unidad_medida || 'unidad'
 
     setForm({
-      nombre: p.nombre,
-      precioCosto: precioNumerico.toFixed(2),
-      stock_actual: stockActualNum,
-      stock_minimo: stockMinNum,
-      unidad_medida: unidad,
-      codigo_barras: p.codigo_barras || '',
+      nombre: p.nombre, precioCosto: precioNumerico.toFixed(2), stock_actual: stockActualNum,
+      stock_minimo: stockMinNum, unidad_medida: unidad, codigo_barras: p.codigo_barras || '',
       id_categoria: p.id_categoria,
     })
 
@@ -254,68 +219,41 @@ export default function Productos() {
     setStockMinimoVisible(formatearStockValor(stockMinNum, unidad))
 
     setErroresCampos({})
-    setError('')
-    setMensajeExito('')
+    setAvisoCodigoBarras('')
     setMostrarFormulario(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  // Cierre EXPLÍCITO — el ÚNICO lugar del archivo que hace setMostrarFormulario(false)
   const handleCancelar = () => {
-    setEditando(null)
-    setForm({
-      nombre: '',
-      precioCosto: '',
-      stock_actual: '',
-      stock_minimo: '',
-      unidad_medida: 'unidad',
-      codigo_barras: '',
-      id_categoria: '',
-    })
-    setPrecioVisible('')
-    setStockActualVisible('')
-    setStockMinimoVisible('')
-    setErroresCampos({})
-    setError('')
+    limpiarFormulario()
     setMostrarFormulario(false)
   }
 
-  const handleEliminar = async (producto) => {
-    const idProd = producto.id_producto
-    const nombreProd = producto.nombre || 'Producto'
+  const handleEliminar = (producto) => setConfirmEliminar(producto)
 
-    if (!window.confirm(`¿Estás seguro de que querés eliminar "${nombreProd}"? Se eliminarán también sus stocks y movimientos.`)) {
-      return
-    }
+  const confirmarEliminacion = async () => {
+    const producto = confirmEliminar
+    if (!producto) return
+    setConfirmEliminar(null)
 
     try {
-      const res = await fetch(`${API_URL}/productos/${idProd}`, {
+      const res = await fetch(`${API_URL}/productos/${producto.id_producto}`, {
         method: 'DELETE',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
 
       if (!res.ok) {
-        let detalleError = 'Ocurrió un error al eliminar el producto'
-        try {
-          const data = await res.json()
-          if (data?.detail) detalleError = data.detail
-        } catch {}
-        setError(detalleError)
+        let detalle = 'Ocurrió un error al eliminar el producto'
+        try { const data = await res.json(); if (data?.detail) detalle = data.detail } catch {}
+        mostrarAlerta('error', detalle)
         return
       }
 
-      setError('')
-      setMensajeExito(`"${nombreProd}" eliminado correctamente`)
-      setTimeout(() => setMensajeExito(''), 4000)
-
-      // Si era el único producto de esta página (y no es la página 1),
-      // retrocedemos una página; si no, simplemente refrescamos la actual.
-      if (productos.length === 1 && page > 1) {
-        setPage((p) => p - 1)
-      } else {
-        cargarDatos()
-      }
+      setProductos((prev) => prev.filter((p) => p.id_producto !== producto.id_producto))
+      mostrarAlerta('ok', `"${producto.nombre}" eliminado correctamente`)
     } catch {
-      setError('Sin conexión al intentar eliminar el producto.')
+      mostrarAlerta('error', 'Sin conexión al intentar eliminar el producto.')
     }
   }
 
@@ -327,19 +265,15 @@ export default function Productos() {
     if (!form.precioCosto || isNaN(parseFloat(form.precioCosto))) errores.precioCosto = true
     if (form.stock_minimo === '' || isNaN(parseFloat(form.stock_minimo))) errores.stock_minimo = true
     if (!form.id_categoria) errores.id_categoria = true
-    if (!editando && (form.stock_actual === '' || isNaN(parseFloat(form.stock_actual)))) {
-      errores.stock_actual = true
-    }
+    if (!editando && (form.stock_actual === '' || isNaN(parseFloat(form.stock_actual)))) errores.stock_actual = true
 
     if (Object.keys(errores).length > 0) {
       setErroresCampos(errores)
-      setError('Completá los campos obligatorios marcados en rojo (*)')
+      mostrarAlerta('advertencia', 'Completá los campos obligatorios marcados en rojo (*)')
       return
     }
 
     setCargando(true)
-    setError('')
-    setMensajeExito('')
 
     try {
       const url = editando ? `${API_URL}/productos/${editando.id_producto}` : `${API_URL}/productos`
@@ -347,10 +281,7 @@ export default function Productos() {
 
       const res = await fetch(url, {
         method,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           nombre: form.nombre.trim(),
           precioCosto: parseFloat(form.precioCosto),
@@ -365,34 +296,35 @@ export default function Productos() {
       const data = await res.json()
 
       if (!res.ok) {
-        setError(data.detail || 'Ocurrió un error al guardar el producto')
+        mostrarAlerta('error', data.detail || 'Ocurrió un error al guardar el producto')
         return
       }
 
-      // Antes se mutaba el array local a mano (push / map). Ahora que
-      // `productos` es solo "la página actual" traída del servidor, lo más
-      // simple y correcto es recargar esa página desde la fuente de verdad.
       if (editando) {
-        setMensajeExito(`"${data.nombre}" actualizado correctamente`)
+        setProductos((prev) => prev.map((p) => p.id_producto === data.id_producto ? data : p))
+        mostrarAlerta('ok', `"${data.nombre}" actualizado correctamente`)
       } else {
-        setMensajeExito(`"${data.nombre}" guardado con ${form.stock_actual || 0} ${ETIQUETAS_UNIDAD[form.unidad_medida]} de stock`)
+        setProductos((prev) => [...prev, data])
+        mostrarAlerta('ok', `"${data.nombre}" guardado con ${form.stock_actual || 0} ${ETIQUETAS_UNIDAD[form.unidad_medida]} de stock`)
       }
-      cargarDatos()
 
-      setTimeout(() => setMensajeExito(''), 4000)
-      handleCancelar()
+      // Solo limpiamos los campos — el formulario NO se cierra acá
+      limpiarFormulario()
     } catch {
-      setError('Sin conexión. Verificá tu conexión e intentá de nuevo')
+      mostrarAlerta('error', 'Sin conexión. Verificá tu conexión e intentá de nuevo')
     } finally {
       setCargando(false)
     }
   }
 
-  // El filtro por nombre y por categoría ahora se resuelven en el backend
-  // (van como query params en cargarDatos). Acá solo queda ordenar la
-  // página que ya llegó del servidor — no el catálogo completo, porque
-  // el resto de las páginas ni están en memoria.
-  const productosProcesados = [...productos].sort((a, b) => {
+  const productosProcesados = productos
+    .filter((p) => {
+      const textoLimpio = busqueda.trim().toLowerCase()
+      const cumpleBusqueda = textoLimpio.length >= 3 ? p.nombre.toLowerCase().includes(textoLimpio) : true
+      const cumpleCategoria = categoriaFiltro ? p.id_categoria === parseInt(categoriaFiltro) : true
+      return cumpleBusqueda && cumpleCategoria
+    })
+    .sort((a, b) => {
       let valorA = a[orden.columna]
       let valorB = b[orden.columna]
 
@@ -426,7 +358,18 @@ export default function Productos() {
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
-      {/* Navbar — encabezado más chico */}
+      <Alerta tipo={notificacion?.tipo} mensaje={notificacion?.mensaje} onCerrar={() => setNotificacion(null)} />
+
+      <ConfirmDialog
+        abierto={!!confirmEliminar}
+        tipo="error"
+        titulo="Eliminar producto"
+        mensaje={confirmEliminar ? `¿Estás seguro de que querés eliminar "${confirmEliminar.nombre}"? Se eliminarán también sus stocks y movimientos.` : ''}
+        textoConfirmar="Eliminar"
+        onConfirmar={confirmarEliminacion}
+        onCancelar={() => setConfirmEliminar(null)}
+      />
+
       <nav style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
         className="px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/dashboard')}>
@@ -462,18 +405,12 @@ export default function Productos() {
           )}
         </div>
 
-        {mensajeExito && (
-          <div className="mb-6 text-xs px-4 py-3 rounded-lg flex items-center justify-between"
-            style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', color: '#34d399' }}>
-            <span>✓ {mensajeExito}</span>
-            <button onClick={() => setMensajeExito('')} className="text-xs hover:opacity-75 ml-2 text-emerald-400">✕</button>
-          </div>
-        )}
-
         {mostrarFormulario && (
           <div className="rounded-xl p-6 mb-8" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-white">{editando ? `Editando: ${editando.nombre}` : 'Nuevo Producto'}</h3>
+              <h3 className="text-lg font-medium text-white">
+                {editando ? 'Editando producto...' : 'Agregando producto...'}
+              </h3>
               <button onClick={handleCancelar} className="text-xs text-gray-400 hover:text-white">✕ Cerrar</button>
             </div>
 
@@ -563,18 +500,13 @@ export default function Productos() {
                   value={form.codigo_barras} onChange={handleChange}
                   onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault() }}
                   className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} />
+                  style={{ background: 'rgba(255,255,255,0.05)', border: avisoCodigoBarras ? '1px solid #eab308' : '1px solid rgba(255,255,255,0.1)' }} />
+                {avisoCodigoBarras && (
+                  <p className="text-xs mt-1" style={{ color: '#facc15' }}>⚠️ {avisoCodigoBarras}</p>
+                )}
               </div>
 
-              {error && (
-                <div className="md:col-span-2 text-xs px-3 py-2 rounded-lg"
-                  style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171' }}>
-                  {error}
-                </div>
-              )}
-
               <div className="md:col-span-2 mt-2 flex gap-3">
-                {/* Botón sólido verde: confirmar/guardar */}
                 <button type="submit" disabled={cargando} className="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
                   style={{ background: 'linear-gradient(135deg, #00c6ff, #39ff14)', color: '#0a0a0f' }}>
                   {cargando && (
@@ -596,7 +528,7 @@ export default function Productos() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <h3 className="text-lg font-medium text-white">Listado de Productos</h3>
             <div className="flex flex-col sm:flex-row gap-3">
-              <input type="text" placeholder="Buscar por nombre o código..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
+              <input type="text" placeholder="Buscar por nombre (mín. 3 letras)..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
                 className="px-3 py-1.5 rounded-lg text-sm text-white focus:outline-none"
                 style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '240px' }} />
 
@@ -640,7 +572,7 @@ export default function Productos() {
                 {productosProcesados.length === 0 ? (
                   <tr>
                     <td colSpan="7" className="py-6 text-center text-xs" style={{ color: '#6b7280' }}>
-                      {totalItems === 0 ? 'No hay productos registrados.' : 'No se encontraron productos que coincidan.'}
+                      {productos.length === 0 ? 'No hay productos registrados.' : 'No se encontraron productos que coincidan.'}
                     </td>
                   </tr>
                 ) : (
@@ -653,26 +585,16 @@ export default function Productos() {
 
                     return (
                       <tr key={p.id_producto} className="transition-colors"
-                        style={{
-                          borderBottom: '1px solid rgba(255,255,255,0.04)',
-                          background: i % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent',
-                        }}>
+                        style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: i % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent' }}>
                         <td className="py-3 px-3 font-medium text-white">{p.nombre}</td>
                         <td className="py-3 px-3">{p.categoria?.nombre || '-'}</td>
                         <td className="py-3 px-3 font-mono">
                           ${Number(p.precioCosto || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
-                        <td className="py-3 px-3 font-mono text-white">
-                          {stockMinFormateado}
-                        </td>
-                        <td className="py-3 px-3 text-xs capitalize" style={{ color: '#9ca3af' }}>
-                          {p.unidad_medida || 'unidad'}
-                        </td>
-                        <td className="py-3 px-3" style={{ color: '#6b7280' }}>
-                          {p.codigo_barras || '-'}
-                        </td>
+                        <td className="py-3 px-3 font-mono text-white">{stockMinFormateado}</td>
+                        <td className="py-3 px-3 text-xs capitalize" style={{ color: '#9ca3af' }}>{p.unidad_medida || 'unidad'}</td>
+                        <td className="py-3 px-3" style={{ color: '#6b7280' }}>{p.codigo_barras || '-'}</td>
                         <td className="py-3 px-3 flex gap-2">
-                          {/* Editar: celeste — es navegación hacia el formulario */}
                           <button onClick={() => handleEditar(p)} className="text-xs px-3 py-1 rounded-lg"
                             style={{ background: 'rgba(0,198,255,0.1)', border: '1px solid rgba(0,198,255,0.3)', color: '#00c6ff' }}>
                             Editar
@@ -689,8 +611,6 @@ export default function Productos() {
               </tbody>
             </table>
           </div>
-
-          <Paginador page={page} totalPages={totalPaginas} total={totalItems} pageSize={PAGE_SIZE} onCambiarPagina={setPage} />
         </div>
       </main>
     </div>
