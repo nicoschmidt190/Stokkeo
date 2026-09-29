@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext'
 import { useCategorias } from '../context/CategoriasContext'
 import { useDebounce } from '../hooks/useDebounce'
 import Paginador from '../components/Paginador'
+import Alerta from '../components/Alerta'
+import ConfirmDialog from '../components/ConfirmDialog'
 import logo from '../assets/logo.png'
 
 const PAGE_SIZE = 30
@@ -55,9 +57,18 @@ export default function Movimientos() {
   })
 
   const [erroresCampos, setErroresCampos] = useState({})
-  const [error, setError] = useState('')
-  const [mensajeExito, setMensajeExito] = useState('')
   const [cargando, setCargando] = useState(false)
+
+  const [notificacion, setNotificacion] = useState(null)
+  const mostrarAlerta = (tipo, mensaje) => setNotificacion({ tipo, mensaje })
+
+  useEffect(() => {
+    if (!notificacion) return
+    const t = setTimeout(() => setNotificacion(null), 4000)
+    return () => clearTimeout(t)
+  }, [notificacion])
+
+  const [confirmFecha, setConfirmFecha] = useState(false)
 
   // --- Filtros y orden del historial ---
   const [busquedaLista, setBusquedaLista] = useState('')
@@ -93,7 +104,7 @@ export default function Movimientos() {
       }
     } catch (err) {
       console.error('Error al cargar movimientos:', err)
-      setError('Error al sincronizar el historial con el servidor.')
+      mostrarAlerta('error', 'Error al sincronizar el historial con el servidor.')
     }
   }
 
@@ -115,7 +126,7 @@ export default function Movimientos() {
       await cargarMovimientos()
     } catch (err) {
       console.error('Error al cargar datos:', err)
-      setError('Error al sincronizar datos con el servidor.')
+      mostrarAlerta('error', 'Error al sincronizar datos con el servidor.')
     } finally {
       setCargandoDatos(false)
     }
@@ -156,7 +167,6 @@ export default function Movimientos() {
     if (matchBarcode) {
       setForm((prev) => ({ ...prev, id_producto: matchBarcode.id_producto.toString(), origen: 'Scanner' }))
       setErroresCampos((prev) => ({ ...prev, id_producto: false }))
-      setError('')
       return
     }
 
@@ -164,7 +174,6 @@ export default function Movimientos() {
     if (matchNombre) {
       setForm((prev) => ({ ...prev, id_producto: matchNombre.id_producto.toString(), origen: 'Manual' }))
       setErroresCampos((prev) => ({ ...prev, id_producto: false }))
-      setError('')
     }
   }
 
@@ -185,9 +194,8 @@ export default function Movimientos() {
         }))
         setErroresCampos((prev) => ({ ...prev, id_producto: false }))
         setBusquedaRapida('')
-        setError('')
       } else {
-        setError(`No se encontró ningún producto con el código o nombre: "${busquedaRapida}"`)
+        mostrarAlerta('advertencia', `No se encontró ningún producto con el código o nombre: "${busquedaRapida}"`)
       }
     }
   }
@@ -195,7 +203,6 @@ export default function Movimientos() {
   const handleChange = (e) => {
     const { name, value } = e.target
     setForm({ ...form, [name]: value })
-    setError('')
     if (erroresCampos[name]) {
       setErroresCampos((prev) => ({ ...prev, [name]: false }))
     }
@@ -209,7 +216,6 @@ export default function Movimientos() {
       observaciones: '',
     }))
     setErroresCampos({})
-    setError('')
   }
 
   const fechaFueModificada = form.fecha_hora !== fechaInicialRef.current
@@ -229,7 +235,7 @@ export default function Movimientos() {
     setErroresCampos({})
   }
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault()
 
     const errores = {}
@@ -244,28 +250,29 @@ export default function Movimientos() {
 
     if (Object.keys(errores).length > 0) {
       setErroresCampos(errores)
-      setError('Completá los campos obligatorios marcados en rojo (*)')
+      mostrarAlerta('advertencia', 'Completá los campos obligatorios marcados en rojo (*)')
       return
     }
 
     if (form.tipo === 'Salida' && cant > stockActual) {
       setErroresCampos({ cantidad: true })
-      setError(
+      mostrarAlerta(
+        'error',
         `No podés retirar ${cant} ${ETIQUETAS_UNIDAD[unidadProducto] || unidadProducto}: el stock disponible es de ${stockActual}`
       )
       return
     }
 
     if (fechaFueModificada) {
-      const confirmar = window.confirm(
-        'Modificaste la fecha del movimiento. ¿Estás seguro de que querés registrarlo con esa fecha?'
-      )
-      if (!confirmar) return
+      setConfirmFecha(true)
+      return
     }
 
+    registrarMovimiento(cant)
+  }
+
+  const registrarMovimiento = async (cant) => {
     setCargando(true)
-    setError('')
-    setMensajeExito('')
 
     try {
       const body = {
@@ -295,7 +302,7 @@ export default function Movimientos() {
       const data = await res.json()
 
       if (!res.ok) {
-        setError(data.detail || 'Error al registrar el movimiento')
+        mostrarAlerta('error', data.detail || 'Error al registrar el movimiento')
         return
       }
 
@@ -319,16 +326,15 @@ export default function Movimientos() {
 
       const unidad = ETIQUETAS_UNIDAD[unidadProducto] || unidadProducto
       const accion = form.tipo === 'Entrada' ? 'sumaron' : 'retiraron'
-      let mensaje = `Se ${accion} ${cant} ${unidad} de "${productoSeleccionado?.nombre}". Stock actual: ${nuevoTotal} ${unidad}`
+      const base = `Se ${accion} ${cant} ${unidad} de "${productoSeleccionado?.nombre}". Stock actual: ${nuevoTotal} ${unidad}`
 
-      if (form.tipo === 'Salida' && nuevoTotal <= (productoSeleccionado?.stock_minimo ?? 0)) {
-        mensaje += nuevoTotal <= 0
-          ? ' — ⚠ El producto se quedó sin stock.'
-          : ' — ⚠ El producto llegó a su stock mínimo.'
+      if (form.tipo === 'Salida' && nuevoTotal <= 0) {
+        mostrarAlerta('error', `${base} — El producto se quedó sin stock.`)
+      } else if (form.tipo === 'Salida' && nuevoTotal <= (productoSeleccionado?.stock_minimo ?? 0)) {
+        mostrarAlerta('advertencia', `${base} — El producto llegó a su stock mínimo.`)
+      } else {
+        mostrarAlerta('ok', base)
       }
-
-      setMensajeExito(mensaje)
-      setTimeout(() => setMensajeExito(''), 5000)
 
       resetearFormulario()
       setBusquedaRapida('')
@@ -336,10 +342,15 @@ export default function Movimientos() {
 
     } catch (err) {
       console.error(err)
-      setError('Sin conexión al registrar el movimiento.')
+      mostrarAlerta('error', 'Sin conexión al registrar el movimiento.')
     } finally {
       setCargando(false)
     }
+  }
+
+  const confirmarFechaModificada = () => {
+    setConfirmFecha(false)
+    registrarMovimiento(parseFloat(form.cantidad))
   }
 
   const nuevoTotalPreview = form.cantidad && parseFloat(form.cantidad) > 0
@@ -384,6 +395,18 @@ export default function Movimientos() {
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
+      <Alerta tipo={notificacion?.tipo} mensaje={notificacion?.mensaje} onCerrar={() => setNotificacion(null)} />
+
+      <ConfirmDialog
+        abierto={confirmFecha}
+        tipo="advertencia"
+        titulo="Fecha modificada"
+        mensaje="Modificaste la fecha del movimiento. ¿Estás seguro de que querés registrarlo con esa fecha?"
+        textoConfirmar="Sí, registrar"
+        onConfirmar={confirmarFechaModificada}
+        onCancelar={() => setConfirmFecha(false)}
+      />
+
       <nav
         style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
         className="px-6 py-3 flex items-center justify-between"
@@ -423,16 +446,6 @@ export default function Movimientos() {
         )}
 
         <h2 className="text-xl font-semibold text-white mb-4">Movimientos de Stock</h2>
-
-        {mensajeExito && (
-          <div
-            className="mb-6 text-xs px-4 py-3 rounded-lg flex items-center justify-between transition-all"
-            style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', color: '#34d399' }}
-          >
-            <span>✓ {mensajeExito}</span>
-            <button onClick={() => setMensajeExito('')} className="text-xs hover:opacity-75 ml-2 text-emerald-400">✕</button>
-          </div>
-        )}
 
         <div
           className="rounded-xl p-6 mb-8"
@@ -546,7 +559,7 @@ export default function Movimientos() {
             {/* Fecha del movimiento */}
             <div className="flex flex-col gap-1">
               <label className="text-xs" style={{ color: '#9ca3af' }}>
-                Fecha y hora {fechaFueModificada && <span style={{ color: '#fb923c' }}>(modificada)</span>}
+                Fecha y hora {fechaFueModificada && <span style={{ color: '#facc15' }}>(modificada)</span>}
               </label>
               <input
                 type="datetime-local"
@@ -556,7 +569,7 @@ export default function Movimientos() {
                 className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
                 style={{
                   background: 'rgba(255,255,255,0.05)',
-                  border: fechaFueModificada ? '1px solid rgba(249,115,22,0.4)' : '1px solid rgba(255,255,255,0.1)',
+                  border: fechaFueModificada ? '1px solid rgba(234,179,8,0.4)' : '1px solid rgba(255,255,255,0.1)',
                 }}
               />
             </div>
@@ -616,27 +629,18 @@ export default function Movimientos() {
                   </div>
                   {nuevoTotalPreview !== null && (
                     <div>
-                      <span className="block" style={{ color: nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#fb923c' : '#34d399' }}>
+                      <span className="block" style={{ color: nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#facc15' : '#34d399' }}>
                         Nuevo Total
                       </span>
                       <span
                         className="text-sm font-bold"
-                        style={{ color: nuevoTotalPreview < 0 ? '#f87171' : nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#fb923c' : '#34d399' }}
+                        style={{ color: nuevoTotalPreview <= 0 ? '#f87171' : nuevoTotalPreview <= productoSeleccionado.stock_minimo ? '#facc15' : '#34d399' }}
                       >
                         {nuevoTotalPreview}
                       </span>
                     </div>
                   )}
                 </div>
-              </div>
-            )}
-
-            {error && (
-              <div
-                className="md:col-span-2 text-xs px-3 py-2 rounded-lg"
-                style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171' }}
-              >
-                {error}
               </div>
             )}
 

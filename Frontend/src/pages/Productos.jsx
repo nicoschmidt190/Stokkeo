@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext'
 import { useCategorias } from '../context/CategoriasContext'
 import { useDebounce } from '../hooks/useDebounce'
 import Paginador from '../components/Paginador'
+import Alerta from '../components/Alerta'
+import ConfirmDialog from '../components/ConfirmDialog'
 import logo from '../assets/logo.png'
 
 const PAGE_SIZE = 30
@@ -39,7 +41,6 @@ export default function Productos() {
 
   const [busqueda, setBusqueda] = useState('')
   const busquedaDebounced = useDebounce(busqueda, 400)
-  const [mensajeExito, setMensajeExito] = useState('')
   const [categoriaFiltro, setCategoriaFiltro] = useState('')
   const [orden, setOrden] = useState({ columna: 'nombre', direccion: 'asc' })
 
@@ -61,8 +62,19 @@ export default function Productos() {
   const [stockMinimoVisible, setStockMinimoVisible] = useState('')
 
   const [erroresCampos, setErroresCampos] = useState({})
-  const [error, setError] = useState('')
+  const [avisoCodigoBarras, setAvisoCodigoBarras] = useState('')
   const [cargando, setCargando] = useState(false)
+
+  const [notificacion, setNotificacion] = useState(null)
+  const mostrarAlerta = (tipo, mensaje) => setNotificacion({ tipo, mensaje })
+
+  useEffect(() => {
+    if (!notificacion) return
+    const t = setTimeout(() => setNotificacion(null), 4000)
+    return () => clearTimeout(t)
+  }, [notificacion])
+
+  const [confirmEliminar, setConfirmEliminar] = useState(null)
 
   const token = localStorage.getItem('token')
   const API_URL = import.meta.env.VITE_API_URL
@@ -177,11 +189,11 @@ export default function Productos() {
   const handleChange = (e) => {
     const { name, value } = e.target
     setForm({ ...form, [name]: value })
-    setError('')
 
     if (erroresCampos[name]) setErroresCampos((prev) => ({ ...prev, [name]: false }))
 
-    if (name === 'codigo_barras' && value.trim()) {
+    if (name === 'codigo_barras') {
+      if (!value.trim()) { setAvisoCodigoBarras(''); return }
       // Ojo: `productos` ahora es solo la página visible (30 productos), no
       // todo el catálogo. Este chequeo es un aviso rápido "por las dudas",
       // no la validación real — la que manda es la del backend al guardar,
@@ -193,7 +205,7 @@ export default function Productos() {
           p.codigo_barras.trim().toLowerCase() === codigoNormalizado &&
           (!editando || p.id_producto !== editando.id_producto)
       )
-      if (duplicado) setError(`El código ya está asignado al producto "${duplicado.nombre}"`)
+      setAvisoCodigoBarras(duplicado ? `El código ya está asignado al producto "${duplicado.nombre}"` : '')
     }
   }
 
@@ -210,7 +222,7 @@ export default function Productos() {
       existe = productos.some((p) => p.codigo_barras === codigoNuevo)
     }
     setForm((prev) => ({ ...prev, codigo_barras: codigoNuevo }))
-    setError('')
+    setAvisoCodigoBarras('')
   }
 
   const handleAbrirNuevo = () => {
@@ -228,7 +240,7 @@ export default function Productos() {
     setStockActualVisible('0')
     setStockMinimoVisible('')
     setErroresCampos({})
-    setError('')
+    setAvisoCodigoBarras('')
     setMostrarFormulario(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -255,8 +267,7 @@ export default function Productos() {
     setStockMinimoVisible(formatearStockValor(stockMinNum, unidad))
 
     setErroresCampos({})
-    setError('')
-    setMensajeExito('')
+    setAvisoCodigoBarras('')
     setMostrarFormulario(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -279,7 +290,7 @@ export default function Productos() {
     setStockActualVisible('0')
     setStockMinimoVisible('')
     setErroresCampos({})
-    setError('')
+    setAvisoCodigoBarras('')
   }
 
   const handleCancelar = () => {
@@ -287,16 +298,15 @@ export default function Productos() {
     setMostrarFormulario(false)
   }
 
-  const handleEliminar = async (producto) => {
-    const idProd = producto.id_producto
-    const nombreProd = producto.nombre || 'Producto'
+  const handleEliminar = (producto) => setConfirmEliminar(producto)
 
-    if (!window.confirm(`¿Estás seguro de que querés eliminar "${nombreProd}"? Se eliminarán también sus stocks y movimientos.`)) {
-      return
-    }
+  const confirmarEliminacion = async () => {
+    const producto = confirmEliminar
+    if (!producto) return
+    setConfirmEliminar(null)
 
     try {
-      const res = await fetch(`${API_URL}/productos/${idProd}`, {
+      const res = await fetch(`${API_URL}/productos/${producto.id_producto}`, {
         method: 'DELETE',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
@@ -307,13 +317,11 @@ export default function Productos() {
           const data = await res.json()
           if (data?.detail) detalleError = data.detail
         } catch {}
-        setError(detalleError)
+        mostrarAlerta('error', detalleError)
         return
       }
 
-      setError('')
-      setMensajeExito(`"${nombreProd}" eliminado correctamente`)
-      setTimeout(() => setMensajeExito(''), 4000)
+      mostrarAlerta('ok', `"${producto.nombre}" eliminado correctamente`)
 
       // Si era el único producto de esta página (y no es la página 1),
       // retrocedemos una página; si no, simplemente refrescamos la actual.
@@ -323,7 +331,7 @@ export default function Productos() {
         cargarDatos()
       }
     } catch {
-      setError('Sin conexión al intentar eliminar el producto.')
+      mostrarAlerta('error', 'Sin conexión al intentar eliminar el producto.')
     }
   }
 
@@ -341,13 +349,11 @@ export default function Productos() {
 
     if (Object.keys(errores).length > 0) {
       setErroresCampos(errores)
-      setError('Completá los campos obligatorios marcados en rojo (*)')
+      mostrarAlerta('advertencia', 'Completá los campos obligatorios marcados en rojo (*)')
       return
     }
 
     setCargando(true)
-    setError('')
-    setMensajeExito('')
 
     try {
       const url = editando ? `${API_URL}/productos/${editando.id_producto}` : `${API_URL}/productos`
@@ -373,7 +379,7 @@ export default function Productos() {
       const data = await res.json()
 
       if (!res.ok) {
-        setError(data.detail || 'Ocurrió un error al guardar el producto')
+        mostrarAlerta('error', data.detail || 'Ocurrió un error al guardar el producto')
         return
       }
 
@@ -381,12 +387,11 @@ export default function Productos() {
       // `productos` es solo "la página actual" traída del servidor, lo más
       // simple y correcto es recargar esa página desde la fuente de verdad.
       if (editando) {
-        setMensajeExito(`"${data.nombre}" actualizado correctamente`)
+        mostrarAlerta('ok', `"${data.nombre}" actualizado correctamente`)
       } else {
-        setMensajeExito(`"${data.nombre}" guardado con ${form.stock_actual || 0} ${ETIQUETAS_UNIDAD[form.unidad_medida]} de stock`)
+        mostrarAlerta('ok', `"${data.nombre}" guardado con ${form.stock_actual || 0} ${ETIQUETAS_UNIDAD[form.unidad_medida]} de stock`)
       }
       cargarDatos()
-      setTimeout(() => setMensajeExito(''), 4000)
 
       // El formulario ya NO se cierra solo al guardar: se limpia y queda
       // abierto, listo para cargar el siguiente producto sin tener que
@@ -395,7 +400,7 @@ export default function Productos() {
       limpiarFormularioParaSiguiente()
       if (nombreInputRef.current) nombreInputRef.current.focus()
     } catch {
-      setError('Sin conexión. Verificá tu conexión e intentá de nuevo')
+      mostrarAlerta('error', 'Sin conexión. Verificá tu conexión e intentá de nuevo')
     } finally {
       setCargando(false)
     }
@@ -439,6 +444,18 @@ export default function Productos() {
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
+      <Alerta tipo={notificacion?.tipo} mensaje={notificacion?.mensaje} onCerrar={() => setNotificacion(null)} />
+
+      <ConfirmDialog
+        abierto={!!confirmEliminar}
+        tipo="error"
+        titulo="Eliminar producto"
+        mensaje={confirmEliminar ? `¿Estás seguro de que querés eliminar "${confirmEliminar.nombre}"? Se eliminarán también sus stocks y movimientos.` : ''}
+        textoConfirmar="Eliminar"
+        onConfirmar={confirmarEliminacion}
+        onCancelar={() => setConfirmEliminar(null)}
+      />
+
       {/* Navbar — encabezado más chico */}
       <nav style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
         className="px-6 py-3 flex items-center justify-between">
@@ -475,18 +492,12 @@ export default function Productos() {
           )}
         </div>
 
-        {mensajeExito && (
-          <div className="mb-6 text-xs px-4 py-3 rounded-lg flex items-center justify-between"
-            style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', color: '#34d399' }}>
-            <span>✓ {mensajeExito}</span>
-            <button onClick={() => setMensajeExito('')} className="text-xs hover:opacity-75 ml-2 text-emerald-400">✕</button>
-          </div>
-        )}
-
         {mostrarFormulario && (
           <div className="rounded-xl p-6 mb-8" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-white">{editando ? `Editando: ${editando.nombre}` : 'Nuevo Producto'}</h3>
+              <h3 className="text-lg font-medium text-white">
+                {editando ? 'Editando producto...' : 'Agregando producto...'}
+              </h3>
               <button onClick={handleCancelar} className="text-xs text-gray-400 hover:text-white">✕ Cerrar</button>
             </div>
 
@@ -576,18 +587,14 @@ export default function Productos() {
                   value={form.codigo_barras} onChange={handleChange}
                   onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault() }}
                   className="w-full px-3 py-2 rounded-lg text-sm text-white focus:outline-none"
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} />
+                  style={{ background: 'rgba(255,255,255,0.05)', border: avisoCodigoBarras ? '1px solid #eab308' : '1px solid rgba(255,255,255,0.1)' }} />
+                {avisoCodigoBarras && (
+                  <p className="text-xs mt-1" style={{ color: '#facc15' }}>⚠️ {avisoCodigoBarras}</p>
+                )}
               </div>
 
-              {error && (
-                <div className="md:col-span-2 text-xs px-3 py-2 rounded-lg"
-                  style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171' }}>
-                  {error}
-                </div>
-              )}
-
               <div className="md:col-span-2 mt-2 flex gap-3">
-                {/* Botón sólido verde: confirmar/guardar */}
+                {/* Botón sólido: confirmar/guardar */}
                 <button type="submit" disabled={cargando} className="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
                   style={{ background: 'linear-gradient(135deg, #00c6ff, #39ff14)', color: '#0a0a0f' }}>
                   {cargando && (
