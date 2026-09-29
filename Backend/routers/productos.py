@@ -59,26 +59,25 @@ def listar_productos(
 
 @router.post("", response_model=ProductoResponse, status_code=status.HTTP_201_CREATED)
 def crear_producto(producto_in: ProductoCreate, db: Session = Depends(get_db)):
-    # 1. Validar nombre duplicado
     nombre_limpio = producto_in.nombre.strip()
-    existe = db.query(Producto).filter(Producto.nombre.ilike(nombre_limpio)).first()
-    if existe:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Ya existe un producto con ese nombre"
-        )
+    cod_limpio = producto_in.codigo_barras.strip() if (producto_in.codigo_barras and producto_in.codigo_barras.strip()) else None
 
-    # 2. Validar código de barras duplicado si fue provisto
-    if producto_in.codigo_barras and producto_in.codigo_barras.strip():
-        cod_limpio = producto_in.codigo_barras.strip()
-        existe_cod = db.query(Producto).filter(Producto.codigo_barras == cod_limpio).first()
-        if existe_cod:
+    # 1. Nombre y código de barras se validaban en 2 queries separadas;
+    # ahora es 1 sola (con OR) y distinguimos cuál matcheó en Python.
+    filtro = Producto.nombre.ilike(nombre_limpio)
+    if cod_limpio:
+        filtro = filtro | (Producto.codigo_barras == cod_limpio)
+    for dup in db.query(Producto).filter(filtro).all():
+        if dup.nombre.lower() == nombre_limpio.lower():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe un producto con ese nombre")
+        if cod_limpio and dup.codigo_barras == cod_limpio:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"El código de barras '{cod_limpio}' ya está asignado a otro producto"
             )
 
-    # 3. Validar categoría
+    # 2. Validar categoría (guardamos el objeto: lo reusamos abajo para
+    # armar la respuesta sin tener que volver a pedirlo)
     cat_existe = db.query(Categoria).filter(Categoria.id_categoria == producto_in.id_categoria).first()
     if not cat_existe:
         raise HTTPException(
@@ -86,67 +85,72 @@ def crear_producto(producto_in: ProductoCreate, db: Session = Depends(get_db)):
             detail="La categoría seleccionada no existe"
         )
 
-    # 4. Guardar producto
+    # 3. Guardar producto + stock + movimiento inicial, todo en la MISMA
+    # transacción con un único commit al final (antes eran 2 commits +
+    # 2 refresh). flush() (no commit) alcanza para obtener el id_producto
+    # generado por Postgres, sin cerrar la transacción todavía.
     nuevo_prod = Producto(
         nombre=nombre_limpio,
         precioCosto=producto_in.precioCosto,
         stock_minimo=producto_in.stock_minimo,
-        codigo_barras=producto_in.codigo_barras.strip() if producto_in.codigo_barras else None,
+        codigo_barras=cod_limpio,
         unidad_medida=producto_in.unidad_medida.strip() if producto_in.unidad_medida else "unidad",
         id_categoria=producto_in.id_categoria
     )
     db.add(nuevo_prod)
-    db.commit()
-    db.refresh(nuevo_prod)
+    db.flush()
 
-    # 5. Inicializar stock con el valor ingresado
     cant_inicial = producto_in.stock_actual or 0
     nuevo_stock = Stock(id_producto=nuevo_prod.id_producto, cantidad=cant_inicial)
     db.add(nuevo_stock)
 
-    # 6. Si se cargó stock inicial > 0, registrar la entrada en Movimientos
     if cant_inicial > 0:
-        movimiento_inicial = Movimiento(
+        db.add(Movimiento(
             id_producto=nuevo_prod.id_producto,
             tipo="Entrada",
             origen="Manual",
             cantidad=cant_inicial
-        )
-        db.add(movimiento_inicial)
+        ))
 
     db.commit()
-    db.refresh(nuevo_prod)
+
+    # Ya tenemos categoria y stock en memoria (los acabamos de validar y
+    # crear acá arriba) — se los asignamos directo al objeto en vez de
+    # dejar que Pydantic dispare 2 SELECTs más al armar la respuesta.
+    nuevo_prod.categoria = cat_existe
+    nuevo_prod.stock = nuevo_stock
     return nuevo_prod
 
 @router.put("/{id_producto}", response_model=ProductoResponse)
 def editar_producto(id_producto: int, producto_in: ProductoCreate, db: Session = Depends(get_db)):
-    producto = db.query(Producto).filter(Producto.id_producto == id_producto).first()
+    # joinedload acá evita que, más abajo, armar la respuesta dispare
+    # SELECTs lazy extra para categoria/stock.
+    producto = (
+        db.query(Producto)
+        .options(joinedload(Producto.categoria), joinedload(Producto.stock))
+        .filter(Producto.id_producto == id_producto)
+        .first()
+    )
     if not producto:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado")
 
-    # Validar nombre duplicado excluyendo el actual
     nombre_limpio = producto_in.nombre.strip()
-    existe = db.query(Producto).filter(
-        Producto.nombre.ilike(nombre_limpio),
-        Producto.id_producto != id_producto
-    ).first()
-    if existe:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe un producto con ese nombre")
+    cod_limpio = producto_in.codigo_barras.strip() if (producto_in.codigo_barras and producto_in.codigo_barras.strip()) else None
 
-    # Validar código de barras duplicado excluyendo el actual
-    if producto_in.codigo_barras and producto_in.codigo_barras.strip():
-        cod_limpio = producto_in.codigo_barras.strip()
-        existe_cod = db.query(Producto).filter(
-            Producto.codigo_barras == cod_limpio,
-            Producto.id_producto != id_producto
-        ).first()
-        if existe_cod:
+    # Nombre y código de barras, validados en 1 sola query (antes 2),
+    # excluyendo siempre el producto actual.
+    filtro = Producto.nombre.ilike(nombre_limpio)
+    if cod_limpio:
+        filtro = filtro | (Producto.codigo_barras == cod_limpio)
+    for dup in db.query(Producto).filter(filtro, Producto.id_producto != id_producto).all():
+        if dup.nombre.lower() == nombre_limpio.lower():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ya existe un producto con ese nombre")
+        if cod_limpio and dup.codigo_barras == cod_limpio:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"El código de barras '{cod_limpio}' ya está asignado a otro producto"
             )
 
-    # Validar categoría
     cat_existe = db.query(Categoria).filter(Categoria.id_categoria == producto_in.id_categoria).first()
     if not cat_existe:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La categoría seleccionada no existe")
@@ -154,12 +158,15 @@ def editar_producto(id_producto: int, producto_in: ProductoCreate, db: Session =
     producto.nombre = nombre_limpio
     producto.precioCosto = producto_in.precioCosto
     producto.stock_minimo = producto_in.stock_minimo
-    producto.codigo_barras = producto_in.codigo_barras.strip() if producto_in.codigo_barras else None
+    producto.codigo_barras = cod_limpio
     producto.unidad_medida = producto_in.unidad_medida.strip() if producto_in.unidad_medida else "unidad"
     producto.id_categoria = producto_in.id_categoria
+    # Si cambió de categoría, actualizamos también el objeto en memoria
+    # para que la respuesta refleje la categoría nueva y no dispare un
+    # SELECT lazy con la vieja que había quedado cacheada del joinedload.
+    producto.categoria = cat_existe
 
     db.commit()
-    db.refresh(producto)
     return producto
 
 @router.delete("/{id_producto}", status_code=status.HTTP_204_NO_CONTENT)
