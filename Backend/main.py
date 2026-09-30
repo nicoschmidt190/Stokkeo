@@ -2,9 +2,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from apscheduler.schedulers.background import BackgroundScheduler
 import traceback
+import logging
 from database import engine
-from routers import auth, categorias, productos, stock, movimientos
+from routers import auth, categorias, productos, stock, movimientos, precios_competidor
 
 
 
@@ -13,6 +15,7 @@ app.include_router(categorias.router)
 app.include_router(productos.router)
 app.include_router(stock.router)
 app.include_router(movimientos.router)
+app.include_router(precios_competidor.router)
 
 
 
@@ -45,6 +48,13 @@ async def catch_exceptions(request: Request, call_next):
 
 app.include_router(auth.router)
 
+# CU-27: scraping automático "si el sistema está configurado para
+# ejecutarlo en un horario determinado". Corre 1 vez por día a las 3 AM
+# (poco tráfico, y una lectura diaria alcanza y sobra para precios de
+# supermercado). El botón "Actualizar precios" del dashboard sigue
+# funcionando igual para disparar una corrida manual en cualquier momento.
+scheduler = BackgroundScheduler()
+
 @app.on_event("startup")
 def startup():
     try:
@@ -52,6 +62,23 @@ def startup():
             print("✅ Conexión a la base de datos exitosa")
     except Exception as e:
         print(f"❌ Error al conectar a la base de datos: {e}")
+
+    from routers.precios_competidor import _ejecutar_scraping_en_segundo_plano
+    from services import scraping_estado
+
+    def job_scraping_diario():
+        if scraping_estado.esta_en_progreso():
+            logging.info("Scraping diario omitido: ya hay uno en curso.")
+            return
+        scraping_estado.marcar_inicio()
+        _ejecutar_scraping_en_segundo_plano()
+
+    scheduler.add_job(job_scraping_diario, "cron", hour=3, minute=0, id="scraping_diario")
+    scheduler.start()
+
+@app.on_event("shutdown")
+def shutdown():
+    scheduler.shutdown(wait=False)
 
 @app.get("/health")
 def health():

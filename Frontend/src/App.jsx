@@ -8,6 +8,7 @@ import Productos from './pages/Productos'
 import Stock from './pages/Stock'
 import Movimientos from './pages/Movimientos'
 import VentaRapida from './pages/VentaRapida'
+import ComparacionPrecios from './pages/ComparacionPrecios'
 
 function RutaProtegida({ children }) {
   const { usuario, cargando } = useAuth()
