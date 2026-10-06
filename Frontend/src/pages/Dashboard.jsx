@@ -52,7 +52,7 @@ export default function Dashboard() {
             { nombre: 'Stock', descripcion: 'Gestionar stock', ruta: '/stock' },
             { nombre: 'Movimientos', descripcion: 'Gestionar movimientos', ruta: '/movimientos' },
             { nombre: 'Venta rápida', descripcion: 'Salida rápida de stock', ruta: '/venta-rapida' },
-            { nombre: 'Dashboard', descripcion: 'Panel de comparacion de precios', ruta: '/precios_competidor' }
+            { nombre: 'Comparar precios', descripcion: 'Panel de comparacion de precios', ruta: '/precios-competidor' }
             ].map((m, idx) => (
               <div key={m.nombre}
                 onClick={() => navigate(m.ruta)}
