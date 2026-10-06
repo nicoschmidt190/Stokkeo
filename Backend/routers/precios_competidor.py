@@ -146,8 +146,14 @@ def comparacion_precios(db: Session = Depends(get_db)):
         .subquery()
     )
 
+    # Margen que obtendría si comprara en el super (ranking.c.precio) y
+    # revendiera a su precio actual de catálogo (Producto.precioCosto).
+    # Se divide por el precio del SUPERMERCADO (el costo que pagaría),
+    # no por el propio, porque lo que se quiere saber es "¿qué % de
+    # ganancia tengo sobre lo que pagué?", no "¿qué % le estoy
+    # recargando a mi propio precio?".
     diferencia_expr = (
-        (Producto.precioCosto - ranking.c.precio) / func.nullif(Producto.precioCosto, 0) * 100
+        (Producto.precioCosto - ranking.c.precio) / func.nullif(ranking.c.precio, 0) * 100
     )
 
     filas = (

@@ -145,7 +145,6 @@ export default function ComparacionPrecios() {
           <img src={logo} alt="Stokkeo" className="h-12" />
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-sm hidden sm:inline" style={{ color: '#6b7280' }}>{usuario?.email}</span>
           <button onClick={() => navigate('/dashboard')} className="text-sm px-3 py-1.5 rounded-lg font-medium transition-colors" style={{ color: '#9ca3af' }}>
             Dashboard
           </button>
