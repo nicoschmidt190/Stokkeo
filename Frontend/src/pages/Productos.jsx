@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useCategorias } from '../context/CategoriasContext'
 import { useDebounce } from '../hooks/useDebounce'
@@ -31,6 +31,7 @@ const ETIQUETAS_UNIDAD = {
 export default function Productos() {
   const { usuario, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const { categorias, cargarCategorias } = useCategorias()
 
   const nombreInputRef = useRef(null)
@@ -109,6 +110,16 @@ export default function Productos() {
     cargarDatos()
     cargarCategorias() // no dispara fetch si ya estaban cargadas por otro módulo
   }, [page, busquedaDebounced, categoriaFiltro])
+
+  // Si venimos desde Venta Rápida con un código escaneado que no existía
+  // en el catálogo, abrimos el formulario directo con ese código ya
+  // cargado — así el usuario no tiene que volver a tipearlo ni escanearlo.
+  useEffect(() => {
+    if (location.state?.codigoBarrasPendiente) {
+      setForm((prev) => ({ ...prev, codigo_barras: location.state.codigoBarrasPendiente }))
+      setMostrarFormulario(true)
+    }
+  }, [location.state])
 
   const handleLogout = () => {
     logout()

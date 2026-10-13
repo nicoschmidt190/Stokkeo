@@ -78,6 +78,20 @@ def _crear_driver() -> webdriver.Chrome:
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
+
+    # No necesitamos ver nada, solo leer el HTML (título + precio) — bloquear
+   # imágenes ahorra la mayor parte del peso de cada página sin cambiar
+   # ninguna petición HTTP que el sitio vea distinta a la de un navegador real.
+    opciones.add_experimental_option("prefs", {
+      "profile.managed_default_content_settings.images": 2,
+   })
+
+   # "eager" = el control vuelve a tu script apenas el HTML está listo
+  # (DOMContentLoaded), sin esperar a que terminen de cargar imágenes,
+   # fuentes, analytics, etc. Como solo leés el HTML con BeautifulSoup
+   # después, no necesitás que la página esté "visualmente completa".
+    opciones.page_load_strategy = "eager"
+
     servicio = Service(ChromeDriverManager().install())
     return webdriver.Chrome(service=servicio, options=opciones)
 

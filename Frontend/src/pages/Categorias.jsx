@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useCategorias } from '../context/CategoriasContext'
 import { useNavigate } from 'react-router-dom'
 import Alerta from '../components/Alerta'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -8,12 +9,11 @@ import logo from '../assets/logo.png'
 export default function Categorias() {
   const { token, logout } = useAuth()
   const navigate = useNavigate()
+  const { categorias, cargandoCategorias, cargarCategorias } = useCategorias()
 
-  const [categorias, setCategorias] = useState([])
   const [nombre, setNombre] = useState('')
   const [editando, setEditando] = useState(null)
   const [cargando, setCargando] = useState(false)
-  const [cargandoLista, setCargandoLista] = useState(true)
 
   const [notificacion, setNotificacion] = useState(null)
   const mostrarAlerta = (tipo, mensaje) => setNotificacion({ tipo, mensaje })
@@ -36,20 +36,11 @@ export default function Categorias() {
     'Authorization': `Bearer ${token}`
   }
 
-  const cargarCategorias = async () => {
-    setCargandoLista(true)
-    try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/categorias`, { headers })
-      const data = await res.json()
-      setCategorias(data)
-    } catch {
-      mostrarAlerta('error', 'Error al cargar las categorías')
-    } finally {
-      setCargandoLista(false)
-    }
-  }
-
-  useEffect(() => { cargarCategorias() }, [])
+  // Al entrar a esta pantalla, pedimos siempre la versión más fresca del
+  // servidor (forzar=true) — acá es donde el usuario administra
+  // categorías, así que no queremos arriesgarnos a mostrarle el cache
+  // viejo del Context mientras edita.
+  useEffect(() => { cargarCategorias(true) }, [])
 
   const handleSubmit = async () => {
     if (!nombre) { mostrarAlerta('advertencia', 'El nombre de la categoría no puede estar vacío'); return }
@@ -67,7 +58,7 @@ export default function Categorias() {
 
       setNombre('')
       setEditando(null)
-      cargarCategorias()
+      cargarCategorias(true) // refresca el Context compartido, no solo esta pantalla
     } catch {
       mostrarAlerta('error', 'Error de conexión')
     } finally {
@@ -127,7 +118,7 @@ export default function Categorias() {
 
       setConflicto(null)
       setCategoriaDestino('')
-      cargarCategorias()
+      cargarCategorias(true) // acá también — el borrado también desactualiza el cache compartido
 
     } catch {
       mostrarAlerta('error', 'Error de conexión')
@@ -144,9 +135,9 @@ export default function Categorias() {
   }
 
   const confirmarReasignar = () => {
-    if (!categoriaDestino) { 
+    if (!categoriaDestino) {
       mostrarAlerta('advertencia', 'Elegí a qué categoría reasignar los productos')
-      return 
+      return
     }
     if (!conflicto?.categoria) return
     ejecutarEliminacion(conflicto.categoria, 'reasignar', categoriaDestino)
@@ -163,7 +154,6 @@ export default function Categorias() {
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
       <Alerta tipo={notificacion?.tipo} mensaje={notificacion?.mensaje} onCerrar={() => setNotificacion(null)} />
 
-      {/* Confirmación normal de borrado */}
       <ConfirmDialog
         abierto={!!confirmEliminar}
         tipo="error"
@@ -174,7 +164,6 @@ export default function Categorias() {
         onCancelar={() => setConfirmEliminar(null)}
       />
 
-      {/* Modal de conflicto */}
       {conflicto && conflicto.categoria && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
           style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }}>
@@ -201,8 +190,8 @@ export default function Categorias() {
                       <option key={c.id_categoria} value={c.id_categoria}>{c.nombre}</option>
                     ))}
                 </select>
-                <button 
-                  onClick={confirmarReasignar} 
+                <button
+                  onClick={confirmarReasignar}
                   disabled={!!procesandoAccion}
                   className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
                   style={{ background: 'linear-gradient(135deg, #00c6ff, #39ff14)', color: '#0a0a0f' }}>
@@ -217,8 +206,8 @@ export default function Categorias() {
               <div className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.08)' }} />
             </div>
 
-            <button 
-              onClick={confirmarCascada} 
+            <button
+              onClick={confirmarCascada}
               disabled={!!procesandoAccion}
               className="w-full px-4 py-2 rounded-lg text-sm font-medium mb-3 transition-all"
               style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#f87171' }}>
@@ -252,7 +241,7 @@ export default function Categorias() {
       </nav>
 
       <main className="p-8 max-w-2xl mx-auto relative">
-        {cargandoLista && (
+        {cargandoCategorias && (
           <div className="absolute inset-0 flex items-center justify-center z-10"
             style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
             <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
