@@ -8,9 +8,10 @@ from database import get_db
 from models.movimiento import Movimiento
 from models.producto import Producto, Stock
 from schemas.movimiento import MovimientoCreate, MovimientoResponse
+from routers.auth import obtener_usuario_actual
 from schemas.pagination import PaginatedResponse
 
-router = APIRouter(prefix="/movimientos", tags=["movimientos"])
+router = APIRouter(prefix="/movimientos", tags=["movimientos"], dependencies=[Depends(obtener_usuario_actual)])
 
 
 # --- ESQUEMAS PYDANTIC PARA VENTA RÁPIDA ---

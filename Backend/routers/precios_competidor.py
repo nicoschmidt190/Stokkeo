@@ -15,9 +15,10 @@ from schemas.precio_competidor import (
 )
 from services import scraping_estado
 from services.scraping_laanonima import scrapear_supermercado, SUPERMERCADO
+from routers.auth import obtener_usuario_actual
 
 logger = logging.getLogger("precios_competidor")
-router = APIRouter(prefix="/precios-competidor", tags=["precios-competidor"])
+router = APIRouter(prefix="/precios-competidor", tags=["precios-competidor"], dependencies=[Depends(obtener_usuario_actual)])
 
 DIFERENCIA_MINIMA_CONVENIENTE = 20.0  # % - umbral fijo de CU-26
 

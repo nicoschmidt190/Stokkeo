@@ -8,8 +8,9 @@ from models.movimiento import Movimiento
 from models.categoria import Categoria
 from schemas.producto import ProductoCreate, ProductoResponse
 from schemas.pagination import PaginatedResponse
+from routers.auth import obtener_usuario_actual
 
-router = APIRouter(prefix="/productos", tags=["productos"])
+router = APIRouter(prefix="/productos", tags=["productos"], dependencies=[Depends(obtener_usuario_actual)])
 
 @router.get("", response_model=PaginatedResponse[ProductoResponse])
 def listar_productos(

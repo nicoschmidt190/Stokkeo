@@ -7,7 +7,8 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import logo from '../assets/logo.png'
 
 export default function Categorias() {
-  const { token, logout } = useAuth()
+  const { logout } = useAuth()
+  const token = localStorage.getItem('token')
   const navigate = useNavigate()
   const { categorias, cargandoCategorias, cargarCategorias } = useCategorias()
 

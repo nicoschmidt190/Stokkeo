@@ -6,8 +6,9 @@ from models.categoria import Categoria
 from models.producto import Producto, Stock
 from models.movimiento import Movimiento
 from pydantic import BaseModel
+from routers.auth import obtener_usuario_actual
 
-router = APIRouter(prefix="/categorias", tags=["categorias"])
+router = APIRouter(prefix="/categorias", tags=["categorias"], dependencies=[Depends(obtener_usuario_actual)])
 
 class CategoriaCreate(BaseModel):
     nombre: str

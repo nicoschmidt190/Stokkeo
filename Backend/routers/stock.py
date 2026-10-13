@@ -5,9 +5,10 @@ from typing import Optional
 from database import get_db
 from models.producto import Producto, Stock
 from schemas.producto import StockResponse
+from routers.auth import obtener_usuario_actual
 from schemas.pagination import PaginatedResponse
 
-router = APIRouter(prefix="/stock", tags=["stock"])
+router = APIRouter(prefix="/stock", tags=["stock"], dependencies=[Depends(obtener_usuario_actual)])
 
 @router.get("", response_model=PaginatedResponse[StockResponse])
 def listar_stock(
