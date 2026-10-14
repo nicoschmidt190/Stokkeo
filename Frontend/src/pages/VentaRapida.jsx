@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useCategorias } from '../context/CategoriasContext'
+import LoaderBloqueante from '../components/LoaderBloqueante'
 import logo from '../assets/logo.png'
 
 const UMBRAL_ESCANER_MS = 50
@@ -371,14 +372,9 @@ const [cargandoDatos, setCargandoDatos] = useState(true)
         </div>
       </nav>
 
-      <main className="p-8 max-w-4xl mx-auto">
-        {cargandoDatos && (
-          <div className="absolute inset-0 flex items-center justify-center z-10"
-             style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
-            <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }} />
-            </div>
- )}
+      <main className="p-8 max-w-4xl mx-auto relative">
+        <LoaderBloqueante visible={cargandoDatos} />
+
         <h2 className="text-xl font-semibold text-white mb-2">Venta Rápida</h2>
 
         <div className="flex gap-2 mb-6">

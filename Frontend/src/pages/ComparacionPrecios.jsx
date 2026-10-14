@@ -1,10 +1,20 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import Alerta from '../components/Alerta'
+import Paginador from '../components/Paginador'
+import LoaderBloqueante from '../components/LoaderBloqueante'
+import ThOrdenable from '../components/ThOrdenable'
+import { useDebounce } from '../hooks/useDebounce'
 import logo from '../assets/logo.png'
 
 const INTERVALO_POLLING_MS = 3000
+const PAGE_SIZE = 30
+// Se trae TODO el listado filtrado de una vez (son solo los productos con
+// >=20% de diferencia, un subconjunto del catálogo) y se ordena y pagina en
+// el navegador: así ordenar una columna es instantáneo, igual que en
+// Productos/Stock/Movimientos, y aun así ordena TODAS las páginas.
+const FETCH_PAGE_SIZE = 5000
 
 export default function ComparacionPrecios() {
   const { usuario, logout } = useAuth()
@@ -12,6 +22,13 @@ export default function ComparacionPrecios() {
 
   const [comparacion, setComparacion] = useState({ nunca_ejecutado: true, items: [] })
   const [cargandoDatos, setCargandoDatos] = useState(true)
+  const [page, setPage] = useState(1)
+
+  // El filtro por nombre se resuelve en el backend (con debounce, como en
+  // los otros módulos). El orden y la paginación son locales (ver arriba).
+  const [busqueda, setBusqueda] = useState('')
+  const busquedaDebounced = useDebounce(busqueda, 400)
+  const [orden, setOrden] = useState({ columna: 'diferencia_porcentual', direccion: 'desc' })
 
   const [estado, setEstado] = useState(null) // { en_progreso, ultima_actualizacion, mensaje, supermercados_ok, supermercados_fallidos }
   const [actualizando, setActualizando] = useState(false)
@@ -30,17 +47,35 @@ export default function ComparacionPrecios() {
   const token = localStorage.getItem('token')
   const API_URL = import.meta.env.VITE_API_URL
 
+  // Solo la ÚLTIMA request puede escribir estado y apagar el loader.
+  const reqId = useRef(0)
+
+  // Último texto de búsqueda en un ref: el polling del scraping (más abajo)
+  // llama a cargarComparacion desde una función creada en el primer render;
+  // sin esto recargaría con el buscador de ESE momento y no con el que el
+  // usuario tiene puesto ahora.
+  const busquedaRef = useRef('')
+  busquedaRef.current = busquedaDebounced.trim()
+
   const cargarComparacion = async () => {
+    const miReq = ++reqId.current
+    setCargandoDatos(true)
     try {
-      const res = await fetch(`${API_URL}/precios-competidor/comparacion`, {
+      const params = new URLSearchParams({ page: '1', page_size: String(FETCH_PAGE_SIZE) })
+      if (busquedaRef.current) params.set('search', busquedaRef.current)
+      const res = await fetch(`${API_URL}/precios-competidor/comparacion?${params}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
+      if (miReq !== reqId.current) return
       if (res.ok) {
         const data = await res.json()
+        if (miReq !== reqId.current) return
         setComparacion(data)
       }
     } catch (err) {
       console.error('Error al cargar comparación de precios:', err)
+    } finally {
+      if (miReq === reqId.current) setCargandoDatos(false)
     }
   }
 
@@ -71,6 +106,7 @@ export default function ComparacionPrecios() {
         clearInterval(intervaloRef.current)
         intervaloRef.current = null
         setActualizando(false)
+        setPage(1)
         cargarComparacion()
         if (data.supermercados_fallidos?.length > 0 && data.supermercados_ok?.length === 0) {
           mostrarAlerta('error', data.mensaje || 'No se pudo actualizar los precios')
@@ -85,14 +121,12 @@ export default function ComparacionPrecios() {
 
   useEffect(() => {
     const inicializar = async () => {
-      setCargandoDatos(true)
       await cargarComparacion()
       const data = await consultarEstado()
       if (data?.en_progreso) {
         setActualizando(true)
         iniciarPolling()
       }
-      setCargandoDatos(false)
     }
     inicializar()
 
@@ -100,6 +134,50 @@ export default function ComparacionPrecios() {
       if (intervaloRef.current) clearInterval(intervaloRef.current)
     }
   }, [])
+
+  // Al cambiar la búsqueda (ya con debounce) se vuelve a pedir el listado al
+  // backend y se vuelve a la página 1. La primera carga la hace `inicializar`
+  // (junto con el estado del scraping).
+  // Se compara contra el valor anterior (y no con un "primer render") para
+  // que no se dispare una request de más cuando React, en desarrollo,
+  // ejecuta los efectos dos veces al montar.
+  const busquedaPrev = useRef(busquedaDebounced)
+  useEffect(() => {
+    if (busquedaPrev.current === busquedaDebounced) return
+    busquedaPrev.current = busquedaDebounced
+    setPage(1)
+    cargarComparacion()
+  }, [busquedaDebounced])
+
+  // Ordenar es instantáneo: se hace acá, sobre el listado completo ya
+  // cargado. Desempate por id_producto para que el orden sea estable.
+  const handleCambiarOrden = (columna) => {
+    setOrden((prev) => ({
+      columna,
+      direccion: prev.columna === columna && prev.direccion === 'asc' ? 'desc' : 'asc',
+    }))
+    setPage(1)
+  }
+
+  const itemsOrdenados = useMemo(() => {
+    const dir = orden.direccion === 'asc' ? 1 : -1
+    const esTexto = orden.columna === 'nombre_producto' || orden.columna === 'supermercado'
+    return [...comparacion.items].sort((a, b) => {
+      const va = a[orden.columna]
+      const vb = b[orden.columna]
+      const cmp = esTexto
+        ? String(va ?? '').localeCompare(String(vb ?? ''), 'es', { sensitivity: 'base' })
+        : Number(va ?? 0) - Number(vb ?? 0)
+      return cmp * dir || a.id_producto - b.id_producto
+    })
+  }, [comparacion.items, orden])
+
+  const totalItems = itemsOrdenados.length
+  const totalPaginas = Math.max(1, Math.ceil(totalItems / PAGE_SIZE))
+  // Si el listado se achica (ej. se actualizaron los precios) y la página
+  // actual ya no existe, mostramos la última.
+  const paginaActual = Math.min(page, totalPaginas)
+  const itemsPagina = itemsOrdenados.slice((paginaActual - 1) * PAGE_SIZE, paginaActual * PAGE_SIZE)
 
   const handleLogout = () => { logout(); navigate('/login') }
 
@@ -156,13 +234,7 @@ export default function ComparacionPrecios() {
       </nav>
 
       <main className="p-8 max-w-4xl mx-auto relative">
-        {cargandoDatos && (
-          <div className="absolute inset-0 flex items-center justify-center z-10"
-            style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
-            <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }} />
-          </div>
-        )}
+        <LoaderBloqueante visible={cargandoDatos} />
 
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-xl font-semibold text-white">Comparación de Precios</h2>
@@ -194,11 +266,25 @@ export default function ComparacionPrecios() {
           )}
         </div>
 
-        <div className="rounded-xl p-6" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <h3 className="text-lg font-medium text-white mb-1">Productos convenientes en La Anónima</h3>
-          <p className="text-xs mb-6" style={{ color: '#6b7280' }}>
-            Productos con al menos un 20% de diferencia a favor del supermercado.
-          </p>
+        <div data-lista className="scroll-mt-4 rounded-xl p-6" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6">
+            <div>
+              <h3 className="text-lg font-medium text-white mb-1">Productos convenientes en La Anónima</h3>
+              <p className="text-xs" style={{ color: '#6b7280' }}>
+                Productos con al menos un 20% de diferencia a favor del supermercado.
+              </p>
+            </div>
+            {!comparacion.nunca_ejecutado && (
+              <input
+                type="text"
+                placeholder="Buscar por nombre..."
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                className="px-3 py-1.5 rounded-lg text-sm text-white focus:outline-none"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '220px' }}
+              />
+            )}
+          </div>
 
           {comparacion.nunca_ejecutado ? (
             <div className="text-center py-10 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
@@ -212,7 +298,9 @@ export default function ComparacionPrecios() {
           ) : comparacion.items.length === 0 ? (
             <div className="text-center py-10 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
               <p className="text-sm" style={{ color: '#9ca3af' }}>
-                No hay productos con una diferencia de precio significativa (≥20%) por ahora.
+                {busquedaDebounced.trim()
+                  ? 'No se encontraron productos que coincidan con la búsqueda.'
+                  : 'No hay productos con una diferencia de precio significativa (≥20%) por ahora.'}
               </p>
             </div>
           ) : (
@@ -220,15 +308,15 @@ export default function ComparacionPrecios() {
               <table className="w-full text-left text-sm" style={{ color: '#d1d5db' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', color: '#6b7280' }}>
-                    <th className="py-2.5 px-3 font-medium">Producto</th>
-                    <th className="py-2.5 px-3 font-medium">Precio Negocio</th>
-                    <th className="py-2.5 px-3 font-medium">Precio Supermercado</th>
-                    <th className="py-2.5 px-3 font-medium">Supermercado</th>
-                    <th className="py-2.5 px-3 font-medium">Diferencia</th>
+                    <ThOrdenable columna="nombre_producto" orden={orden} onCambiarOrden={handleCambiarOrden}>Producto</ThOrdenable>
+                    <ThOrdenable columna="precio_negocio" orden={orden} onCambiarOrden={handleCambiarOrden}>Precio Negocio</ThOrdenable>
+                    <ThOrdenable columna="precio_supermercado" orden={orden} onCambiarOrden={handleCambiarOrden}>Precio Supermercado</ThOrdenable>
+                    <ThOrdenable columna="supermercado" orden={orden} onCambiarOrden={handleCambiarOrden}>Supermercado</ThOrdenable>
+                    <ThOrdenable columna="diferencia_porcentual" orden={orden} onCambiarOrden={handleCambiarOrden}>Diferencia</ThOrdenable>
                   </tr>
                 </thead>
                 <tbody>
-                  {comparacion.items.map((item, i) => (
+                  {itemsPagina.map((item, i) => (
                     <tr key={item.id_producto}
                       style={{
                         borderBottom: '1px solid rgba(255,255,255,0.04)',
@@ -252,6 +340,7 @@ export default function ComparacionPrecios() {
                   ))}
                 </tbody>
               </table>
+              <Paginador page={paginaActual} totalPages={totalPaginas} total={totalItems} pageSize={PAGE_SIZE} onCambiarPagina={setPage} />
             </div>
           )}
         </div>

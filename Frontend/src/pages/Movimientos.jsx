@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext'
 import { useCategorias } from '../context/CategoriasContext'
 import { useDebounce } from '../hooks/useDebounce'
 import Paginador from '../components/Paginador'
+import ThOrdenable from '../components/ThOrdenable'
+import LoaderBloqueante from '../components/LoaderBloqueante'
 import Alerta from '../components/Alerta'
 import ConfirmDialog from '../components/ConfirmDialog'
 import logo from '../assets/logo.png'
@@ -45,6 +47,8 @@ export default function Movimientos() {
   const [movimientos, setMovimientos] = useState([])
   const [busquedaRapida, setBusquedaRapida] = useState('')
   const [cargandoDatos, setCargandoDatos] = useState(true)
+  // Carga del historial al filtrar / paginar (la inicial usa cargandoDatos)
+  const [cargandoLista, setCargandoLista] = useState(false)
 
   const [form, setForm] = useState({
     id_producto: '',
@@ -85,7 +89,13 @@ export default function Movimientos() {
   const token = localStorage.getItem('token')
   const API_URL = import.meta.env.VITE_API_URL
 
+  // Solo la ÚLTIMA request puede escribir estado y apagar el loader (ver
+  // el mismo comentario en Stock.jsx).
+  const reqId = useRef(0)
+
   const cargarMovimientos = async () => {
+    const miReq = ++reqId.current
+    setCargandoLista(true)
     try {
       const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) })
       if (fechaDesde) params.set('desde', fechaDesde)
@@ -96,15 +106,19 @@ export default function Movimientos() {
       const res = await fetch(`${API_URL}/movimientos?${params}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
+      if (miReq !== reqId.current) return
       if (res.ok) {
         const data = await res.json()
+        if (miReq !== reqId.current) return
         setMovimientos(Array.isArray(data.items) ? data.items : [])
         setTotalPaginas(data.total_pages || 1)
         setTotalItems(data.total || 0)
       }
     } catch (err) {
       console.error('Error al cargar movimientos:', err)
-      mostrarAlerta('error', 'Error al sincronizar el historial con el servidor.')
+      if (miReq === reqId.current) mostrarAlerta('error', 'Error al sincronizar el historial con el servidor.')
+    } finally {
+      if (miReq === reqId.current) setCargandoLista(false)
     }
   }
 
@@ -138,9 +152,15 @@ export default function Movimientos() {
 
   // Igual que en Productos/Stock: al cambiar cualquier filtro del
   // historial, volvemos a la página 1.
-  useEffect(() => { setPage(1) }, [busquedaListaDebounced, categoriaFiltro, fechaDesde, fechaHasta])
-
+  // Se hace en el mismo efecto que carga el historial para no disparar
+  // antes una request inútil con "página vieja + filtro nuevo".
+  const filtrosPrev = useRef(`${busquedaListaDebounced}|${categoriaFiltro}|${fechaDesde}|${fechaHasta}`)
   useEffect(() => {
+    const filtros = `${busquedaListaDebounced}|${categoriaFiltro}|${fechaDesde}|${fechaHasta}`
+    if (filtrosPrev.current !== filtros) {
+      filtrosPrev.current = filtros
+      if (page !== 1) { setPage(1); return }
+    }
     if (!cargandoDatos) cargarMovimientos()
   }, [page, busquedaListaDebounced, categoriaFiltro, fechaDesde, fechaHasta])
 
@@ -388,10 +408,6 @@ export default function Movimientos() {
     }))
   }
 
-  const renderIconoOrden = (columna) => {
-    if (orden.columna !== columna) return <span className="text-gray-600 text-[10px] ml-1">⇅</span>
-    return <span className="text-cyan-400 text-xs ml-1 font-bold">{orden.direccion === 'asc' ? '↑' : '↓'}</span>
-  }
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
@@ -433,17 +449,7 @@ export default function Movimientos() {
       </nav>
 
       <main className="p-8 max-w-4xl mx-auto relative">
-        {cargandoDatos && (
-          <div
-            className="absolute inset-0 flex items-center justify-center z-10"
-            style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}
-          >
-            <div
-              className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }}
-            />
-          </div>
-        )}
+        <LoaderBloqueante visible={cargandoDatos || cargandoLista} />
 
         <h2 className="text-xl font-semibold text-white mb-4">Movimientos de Stock</h2>
 
@@ -668,7 +674,8 @@ export default function Movimientos() {
 
         {/* Historial */}
         <div
-          className="rounded-xl p-6"
+          data-lista
+          className="scroll-mt-4 rounded-xl p-6"
           style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
         >
           <div className="flex flex-col gap-3 mb-6">
@@ -729,28 +736,19 @@ export default function Movimientos() {
             <table className="w-full text-left text-sm" style={{ color: '#d1d5db' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', color: '#6b7280' }}>
-                  <th onClick={() => handleCambiarOrden('fecha_hora')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Fecha y Hora {renderIconoOrden('fecha_hora')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('producto')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Producto {renderIconoOrden('producto')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('tipo')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Tipo {renderIconoOrden('tipo')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('origen')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Origen {renderIconoOrden('origen')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('cantidad')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Cantidad {renderIconoOrden('cantidad')}
-                  </th>
+                  <ThOrdenable columna="fecha_hora" orden={orden} onCambiarOrden={handleCambiarOrden}>Fecha y Hora</ThOrdenable>
+                  <ThOrdenable columna="producto" orden={orden} onCambiarOrden={handleCambiarOrden}>Producto</ThOrdenable>
+                  <ThOrdenable columna="tipo" orden={orden} onCambiarOrden={handleCambiarOrden}>Tipo</ThOrdenable>
+                  <ThOrdenable columna="origen" orden={orden} onCambiarOrden={handleCambiarOrden}>Origen</ThOrdenable>
+                  <ThOrdenable columna="cantidad" orden={orden} onCambiarOrden={handleCambiarOrden}>Cantidad</ThOrdenable>
                   <th className="py-2.5 px-3 font-medium">Motivo</th>
+                  <th className="py-2.5 px-3 font-medium">Observaciones</th>
                 </tr>
               </thead>
               <tbody>
                 {movimientosOrdenados.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="py-6 text-center text-xs" style={{ color: '#6b7280' }}>
+                    <td colSpan="7" className="py-6 text-center text-xs" style={{ color: '#6b7280' }}>
                       {totalItems === 0 ? 'No hay movimientos que coincidan con los filtros.' : 'No se encontraron movimientos que coincidan.'}
                     </td>
                   </tr>
@@ -786,6 +784,13 @@ export default function Movimientos() {
                         </td>
                         <td className="py-3 px-3 text-xs" style={{ color: '#9ca3af' }}>
                           {m.motivo ? MOTIVOS_SALIDA.find((mo) => mo.valor === m.motivo)?.label || m.motivo : '-'}
+                        </td>
+                        {/* Solo las Salidas llevan observaciones; el texto largo se
+                            recorta con "..." y se ve completo al pasar el mouse. */}
+                        <td className="py-3 px-3 text-xs" style={{ color: '#9ca3af', maxWidth: '200px' }}>
+                          {m.observaciones
+                            ? <span className="block truncate" title={m.observaciones}>{m.observaciones}</span>
+                            : '-'}
                         </td>
                       </tr>
                     )

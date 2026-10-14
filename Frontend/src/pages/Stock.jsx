@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useCategorias } from '../context/CategoriasContext'
 import { useDebounce } from '../hooks/useDebounce'
 import Paginador from '../components/Paginador'
+import ThOrdenable from '../components/ThOrdenable'
+import LoaderBloqueante from '../components/LoaderBloqueante'
 import logo from '../assets/logo.png'
 
 const PAGE_SIZE = 30
@@ -28,7 +30,7 @@ function BadgeEstado({ estado }) {
   const s = estilos[estado] || estilos.ok
 
   return (
-    <span className="text-xs px-2.5 py-1 rounded-full font-medium"
+    <span className="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap inline-block"
       style={{ background: s.background, border: s.border, color: s.color }}>
       {s.texto}
     </span>
@@ -56,7 +58,13 @@ export default function Stock() {
   const token = localStorage.getItem('token')
   const API_URL = import.meta.env.VITE_API_URL
 
+  // Solo la ÚLTIMA request puede escribir estado y apagar el loader: si el
+  // usuario sigue tipeando/paginando y hay dos pedidos en vuelo, el primero
+  // en volver ya no pisa los datos ni esconde el spinner antes de tiempo.
+  const reqId = useRef(0)
+
   const cargarDatos = async () => {
+    const miReq = ++reqId.current
     setCargando(true)
     try {
       const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) })
@@ -64,8 +72,10 @@ export default function Stock() {
       if (categoriaFiltro) params.set('id_categoria', categoriaFiltro)
 
       const resStock = await fetch(`${API_URL}/stock?${params}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      if (miReq !== reqId.current) return
       if (resStock.ok) {
         const data = await resStock.json()
+        if (miReq !== reqId.current) return
         setStock(Array.isArray(data.items) ? data.items : [])
         setTotalPaginas(data.total_pages || 1)
         setTotalItems(data.total || 0)
@@ -73,15 +83,22 @@ export default function Stock() {
         setError('No se pudo cargar el stock')
       }
     } catch {
-      setError('Sin conexión al cargar el stock')
+      if (miReq === reqId.current) setError('Sin conexión al cargar el stock')
     } finally {
-      setCargando(false)
+      if (miReq === reqId.current) setCargando(false)
     }
   }
 
-  useEffect(() => { setPage(1) }, [busquedaDebounced, categoriaFiltro])
-
+  // Si cambia el buscador o la categoría estando en la página 5, volvemos a
+  // la 1 SIN disparar antes una request inútil con "página 5 + filtro nuevo"
+  // (antes salían dos pedidos y el primero apagaba el loader a medias).
+  const filtrosPrev = useRef(`${busquedaDebounced}|${categoriaFiltro}`)
   useEffect(() => {
+    const filtros = `${busquedaDebounced}|${categoriaFiltro}`
+    if (filtrosPrev.current !== filtros) {
+      filtrosPrev.current = filtros
+      if (page !== 1) { setPage(1); return }
+    }
     cargarDatos()
     cargarCategorias() // no dispara fetch si ya estaban cargadas por otro módulo
   }, [page, busquedaDebounced, categoriaFiltro])
@@ -125,10 +142,6 @@ export default function Stock() {
     }))
   }
 
-  const renderIconoOrden = (columna) => {
-    if (orden.columna !== columna) return <span className="text-gray-600 text-[10px] ml-1">⇅</span>
-    return <span className="text-cyan-400 text-xs ml-1 font-bold">{orden.direccion === 'asc' ? '↑' : '↓'}</span>
-  }
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
@@ -152,14 +165,7 @@ export default function Stock() {
       </nav>
 
       <main className="p-8 max-w-4xl mx-auto relative">
-        {/* Loader bloqueante mientras carga */}
-        {cargando && (
-          <div className="absolute inset-0 flex items-center justify-center z-10"
-            style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
-            <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }} />
-          </div>
-        )}
+        <LoaderBloqueante visible={cargando} />
 
         <h2 className="text-xl font-semibold text-white mb-4">Stock</h2>
 
@@ -170,7 +176,7 @@ export default function Stock() {
           </div>
         )}
 
-        <div className="rounded-xl p-6" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div data-lista className="scroll-mt-4 rounded-xl p-6" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <h3 className="text-lg font-medium text-white">Listado de Stock</h3>
 
@@ -201,21 +207,11 @@ export default function Stock() {
             <table className="w-full text-left text-sm" style={{ color: '#d1d5db' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', color: '#6b7280' }}>
-                  <th onClick={() => handleCambiarOrden('nombre')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Producto {renderIconoOrden('nombre')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('categoria')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Categoría {renderIconoOrden('categoria')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('cantidad')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Cantidad {renderIconoOrden('cantidad')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('stock_minimo')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Mínimo {renderIconoOrden('stock_minimo')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('estado')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Estado {renderIconoOrden('estado')}
-                  </th>
+                  <ThOrdenable columna="nombre" orden={orden} onCambiarOrden={handleCambiarOrden}>Producto</ThOrdenable>
+                  <ThOrdenable columna="categoria" orden={orden} onCambiarOrden={handleCambiarOrden}>Categoría</ThOrdenable>
+                  <ThOrdenable columna="cantidad" orden={orden} onCambiarOrden={handleCambiarOrden}>Cantidad</ThOrdenable>
+                  <ThOrdenable columna="stock_minimo" orden={orden} onCambiarOrden={handleCambiarOrden}>Mínimo</ThOrdenable>
+                  <ThOrdenable columna="estado" orden={orden} onCambiarOrden={handleCambiarOrden} className="min-w-[120px]">Estado</ThOrdenable>
                 </tr>
               </thead>
               <tbody>
@@ -240,7 +236,7 @@ export default function Stock() {
                       <td className="py-3 px-3 font-mono">
                         {formatearCantidad(s.stock_minimo, s.unidad_medida)} {ETIQUETAS_UNIDAD[s.unidad_medida] || s.unidad_medida}
                       </td>
-                      <td className="py-3 px-3"><BadgeEstado estado={s.estado} /></td>
+                      <td className="py-3 px-3 whitespace-nowrap"><BadgeEstado estado={s.estado} /></td>
                     </tr>
                   ))
                 )}

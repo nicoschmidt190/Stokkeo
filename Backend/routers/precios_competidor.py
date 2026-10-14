@@ -1,6 +1,7 @@
 import logging
 import socket
-from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -124,7 +125,16 @@ def estado_scraping():
 
 
 @router.get("/comparacion", response_model=ComparacionPreciosListResponse)
-def comparacion_precios(db: Session = Depends(get_db)):
+def comparacion_precios(
+    page: int = Query(1, ge=1),
+    # le=5000: el frontend trae el listado completo de una vez para ordenarlo
+    # y paginarlo en el navegador (ver ComparacionPrecios.jsx).
+    page_size: int = Query(30, ge=1, le=5000),
+    search: Optional[str] = Query(None, description="Filtra por nombre del producto"),
+    orden: str = Query("diferencia_porcentual", description="Columna por la que ordenar"),
+    direccion: str = Query("desc", pattern="^(asc|desc)$"),
+    db: Session = Depends(get_db),
+):
     nunca_ejecutado = db.query(PrecioCompetidor).count() == 0
     if nunca_ejecutado:
         return ComparacionPreciosListResponse(nunca_ejecutado=True, items=[])
@@ -157,7 +167,7 @@ def comparacion_precios(db: Session = Depends(get_db)):
         (Producto.precioCosto - ranking.c.precio) / func.nullif(ranking.c.precio, 0) * 100
     )
 
-    filas = (
+    base = (
         db.query(
             Producto.id_producto,
             Producto.nombre.label("nombre_producto"),
@@ -170,7 +180,36 @@ def comparacion_precios(db: Session = Depends(get_db)):
         .join(ranking, ranking.c.id_producto == Producto.id_producto)
         .filter(ranking.c.rn == 1)
         .filter(diferencia_expr >= DIFERENCIA_MINIMA_CONVENIENTE)
-        .order_by(diferencia_expr.desc())
+    )
+
+    # Búsqueda por nombre (se aplica ANTES de contar, para que el total y las
+    # páginas correspondan al resultado filtrado).
+    if search and search.strip():
+        base = base.filter(Producto.nombre.ilike(f"%{search.strip()}%"))
+
+    # Orden elegido por el usuario. Es lista blanca (no se arma SQL con el
+    # texto recibido): una columna desconocida cae en el orden por defecto.
+    columnas_orden = {
+        "nombre_producto": func.lower(Producto.nombre),
+        "precio_negocio": Producto.precioCosto,
+        "precio_supermercado": ranking.c.precio,
+        "supermercado": func.lower(ranking.c.supermercado),
+        "diferencia_porcentual": diferencia_expr,
+    }
+    columna = columnas_orden.get(orden, diferencia_expr)
+    orden_sql = columna.asc() if direccion == "asc" else columna.desc()
+
+    # Total ANTES de paginar (con el filtro de >=20% ya aplicado), para que
+    # "Mostrando X-Y de Z" y la cantidad de páginas sean correctos.
+    total = base.order_by(None).count()
+    total_pages = (total + page_size - 1) // page_size
+
+    # id_producto como desempate: sin un orden total estable, dos productos
+    # con la misma diferencia podrían repetirse o saltearse entre páginas.
+    filas = (
+        base.order_by(orden_sql, Producto.id_producto)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
     )
 
@@ -187,4 +226,11 @@ def comparacion_precios(db: Session = Depends(get_db)):
         for f in filas
     ]
 
-    return ComparacionPreciosListResponse(nunca_ejecutado=False, items=items)
+    return ComparacionPreciosListResponse(
+        nunca_ejecutado=False,
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )

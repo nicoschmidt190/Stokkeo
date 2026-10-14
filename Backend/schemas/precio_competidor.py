@@ -24,6 +24,11 @@ class ComparacionPreciosListResponse(BaseModel):
     # se corrió pero nada superó el 20%, o hay resultados para mostrar.
     nunca_ejecutado: bool
     items: List[ComparacionPrecioResponse]
+    # Paginación (mismo formato que PaginatedResponse en el resto de módulos)
+    total: int = 0
+    page: int = 1
+    page_size: int = 30
+    total_pages: int = 0
 
 
 class EstadoScrapingResponse(BaseModel):

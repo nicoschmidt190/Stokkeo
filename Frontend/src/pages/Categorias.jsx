@@ -4,6 +4,7 @@ import { useCategorias } from '../context/CategoriasContext'
 import { useNavigate } from 'react-router-dom'
 import Alerta from '../components/Alerta'
 import ConfirmDialog from '../components/ConfirmDialog'
+import LoaderBloqueante from '../components/LoaderBloqueante'
 import logo from '../assets/logo.png'
 
 export default function Categorias() {
@@ -242,13 +243,7 @@ export default function Categorias() {
       </nav>
 
       <main className="p-8 max-w-2xl mx-auto relative">
-        {cargandoCategorias && (
-          <div className="absolute inset-0 flex items-center justify-center z-10"
-            style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
-            <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }} />
-          </div>
-        )}
+        <LoaderBloqueante visible={cargandoCategorias} />
 
         <h2 className="text-xl font-semibold text-white mb-4">Categorías</h2>
 

@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext'
 import { useCategorias } from '../context/CategoriasContext'
 import { useDebounce } from '../hooks/useDebounce'
 import Paginador from '../components/Paginador'
+import ThOrdenable from '../components/ThOrdenable'
+import LoaderBloqueante from '../components/LoaderBloqueante'
 import Alerta from '../components/Alerta'
 import ConfirmDialog from '../components/ConfirmDialog'
 import logo from '../assets/logo.png'
@@ -80,7 +82,12 @@ export default function Productos() {
   const token = localStorage.getItem('token')
   const API_URL = import.meta.env.VITE_API_URL
 
+  // Solo la ÚLTIMA request puede escribir estado y apagar el loader (ver
+  // el mismo comentario en Stock.jsx).
+  const reqId = useRef(0)
+
   const cargarDatos = async () => {
+    const miReq = ++reqId.current
     setCargandoDatos(true)
     try {
       const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) })
@@ -88,8 +95,10 @@ export default function Productos() {
       if (categoriaFiltro) params.set('id_categoria', categoriaFiltro)
 
       const resProd = await fetch(`${API_URL}/productos?${params}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      if (miReq !== reqId.current) return
       if (resProd.ok) {
         const data = await resProd.json()
+        if (miReq !== reqId.current) return
         setProductos(Array.isArray(data.items) ? data.items : [])
         setTotalPaginas(data.total_pages || 1)
         setTotalItems(data.total || 0)
@@ -97,16 +106,22 @@ export default function Productos() {
     } catch (err) {
       console.error('Error al cargar datos:', err)
     } finally {
-      setCargandoDatos(false)
+      if (miReq === reqId.current) setCargandoDatos(false)
     }
   }
 
   // Al cambiar el buscador o el filtro de categoría, siempre volvemos a la
   // página 1 — si estabas en la página 5 y filtrás, no tiene sentido seguir
   // ahí (podría ni existir esa página para el nuevo resultado).
-  useEffect(() => { setPage(1) }, [busquedaDebounced, categoriaFiltro])
-
+  // Se hace en el mismo efecto que carga los datos para no disparar antes
+  // una request inútil con "página vieja + filtro nuevo".
+  const filtrosPrev = useRef(`${busquedaDebounced}|${categoriaFiltro}`)
   useEffect(() => {
+    const filtros = `${busquedaDebounced}|${categoriaFiltro}`
+    if (filtrosPrev.current !== filtros) {
+      filtrosPrev.current = filtros
+      if (page !== 1) { setPage(1); return }
+    }
     cargarDatos()
     cargarCategorias() // no dispara fetch si ya estaban cargadas por otro módulo
   }, [page, busquedaDebounced, categoriaFiltro])
@@ -448,10 +463,6 @@ export default function Productos() {
     }))
   }
 
-  const renderIconoOrden = (columna) => {
-    if (orden.columna !== columna) return <span className="text-gray-600 text-[10px] ml-1">⇅</span>
-    return <span className="text-cyan-400 text-xs ml-1 font-bold">{orden.direccion === 'asc' ? '↑' : '↓'}</span>
-  }
 
   return (
     <div className="min-h-screen" style={{ background: '#0a0a0f' }}>
@@ -485,13 +496,7 @@ export default function Productos() {
       </nav>
 
       <main className="p-8 max-w-4xl mx-auto relative">
-        {cargandoDatos && (
-          <div className="absolute inset-0 flex items-center justify-center z-10"
-            style={{ background: 'rgba(10,10,15,0.6)', backdropFilter: 'blur(2px)' }}>
-            <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-              style={{ borderColor: 'rgba(0,198,255,0.3)', borderTopColor: '#00c6ff' }} />
-          </div>
-        )}
+        <LoaderBloqueante visible={cargandoDatos} />
 
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-semibold text-white">Productos</h2>
@@ -623,7 +628,7 @@ export default function Productos() {
           </div>
         )}
 
-        <div className="rounded-xl p-6" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div data-lista className="scroll-mt-4 rounded-xl p-6" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <h3 className="text-lg font-medium text-white">Listado de Productos</h3>
             <div className="flex flex-col sm:flex-row gap-3">
@@ -646,24 +651,12 @@ export default function Productos() {
             <table className="w-full text-left text-sm" style={{ color: '#d1d5db' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', color: '#6b7280' }}>
-                  <th onClick={() => handleCambiarOrden('nombre')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Nombre {renderIconoOrden('nombre')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('categoria')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Categoría {renderIconoOrden('categoria')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('precioCosto')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Precio Costo {renderIconoOrden('precioCosto')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('stock_minimo')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Stock Mínimo {renderIconoOrden('stock_minimo')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('unidad_medida')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Medida {renderIconoOrden('unidad_medida')}
-                  </th>
-                  <th onClick={() => handleCambiarOrden('codigo_barras')} className="py-2.5 px-3 font-medium cursor-pointer hover:text-white select-none">
-                    Cód. Barras {renderIconoOrden('codigo_barras')}
-                  </th>
+                  <ThOrdenable columna="nombre" orden={orden} onCambiarOrden={handleCambiarOrden}>Nombre</ThOrdenable>
+                  <ThOrdenable columna="categoria" orden={orden} onCambiarOrden={handleCambiarOrden}>Categoría</ThOrdenable>
+                  <ThOrdenable columna="precioCosto" orden={orden} onCambiarOrden={handleCambiarOrden}>Precio Costo</ThOrdenable>
+                  <ThOrdenable columna="stock_minimo" orden={orden} onCambiarOrden={handleCambiarOrden}>Stock Mínimo</ThOrdenable>
+                  <ThOrdenable columna="unidad_medida" orden={orden} onCambiarOrden={handleCambiarOrden}>Medida</ThOrdenable>
+                  <ThOrdenable columna="codigo_barras" orden={orden} onCambiarOrden={handleCambiarOrden}>Cód. Barras</ThOrdenable>
                   <th className="py-2.5 px-3 font-medium">Acciones</th>
                 </tr>
               </thead>
