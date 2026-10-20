@@ -30,7 +30,7 @@ if frontend_env:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,  # O usa allow_origins=["*"] para pruebas libres
+    allow_origins=["*"],  # O usa allow_origins=["*"] para pruebas libres
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
