@@ -3,11 +3,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from apscheduler.schedulers.background import BackgroundScheduler
+import os
 import traceback
 import logging
 from database import engine
 from routers import auth, categorias, productos, stock, movimientos, precios_competidor
 
+# Orígenes permitidos: localhost (desarrollo) + FRONTEND_URL (producción),
+# varias URLs separadas por coma. Ej: https://tu-frontend.up.railway.app
+ALLOWED_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+ALLOWED_ORIGINS += [
+    o.strip().rstrip("/")
+    for o in os.getenv("FRONTEND_URL", "").split(",")
+    if o.strip()
+]
 
 
 app = FastAPI()
@@ -17,15 +26,11 @@ app.include_router(stock.router)
 app.include_router(movimientos.router)
 app.include_router(precios_competidor.router)
 
-
-
 # 1. Configuración de CORS (debe ir antes de los routers y otros middlewares)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
