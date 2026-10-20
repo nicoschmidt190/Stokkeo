@@ -21,7 +21,8 @@ from routers.auth import obtener_usuario_actual
 logger = logging.getLogger("precios_competidor")
 router = APIRouter(prefix="/precios-competidor", tags=["precios-competidor"], dependencies=[Depends(obtener_usuario_actual)])
 
-DIFERENCIA_MINIMA_CONVENIENTE = 20.0  # % - umbral fijo de CU-26
+DIFERENCIA_MINIMA_CONVENIENTE = 20.0  # % - umbral por defecto de CU-26 (el usuario lo puede cambiar)
+MARGEN_CERCANO = 5.0  # puntos por debajo del umbral que también se devuelven (el front los pinta en naranja)
 
 
 def _hay_internet(timeout: float = 3.0) -> bool:
@@ -133,6 +134,7 @@ def comparacion_precios(
     search: Optional[str] = Query(None, description="Filtra por nombre del producto"),
     orden: str = Query("diferencia_porcentual", description="Columna por la que ordenar"),
     direccion: str = Query("desc", pattern="^(asc|desc)$"),
+    umbral: float = Query(DIFERENCIA_MINIMA_CONVENIENTE, ge=0),
     db: Session = Depends(get_db),
 ):
     nunca_ejecutado = db.query(PrecioCompetidor).count() == 0
@@ -179,7 +181,7 @@ def comparacion_precios(
         )
         .join(ranking, ranking.c.id_producto == Producto.id_producto)
         .filter(ranking.c.rn == 1)
-        .filter(diferencia_expr >= DIFERENCIA_MINIMA_CONVENIENTE)
+        .filter(diferencia_expr >= max(umbral - MARGEN_CERCANO, 0))
     )
 
     # Búsqueda por nombre (se aplica ANTES de contar, para que el total y las

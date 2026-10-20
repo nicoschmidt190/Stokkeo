@@ -11,10 +11,15 @@ import logo from '../assets/logo.png'
 const INTERVALO_POLLING_MS = 3000
 const PAGE_SIZE = 30
 // Se trae TODO el listado filtrado de una vez (son solo los productos con
-// >=20% de diferencia, un subconjunto del catálogo) y se ordena y pagina en
-// el navegador: así ordenar una columna es instantáneo, igual que en
-// Productos/Stock/Movimientos, y aun así ordena TODAS las páginas.
+// la diferencia mínima elegida, un subconjunto del catálogo) y se ordena y
+// pagina en el navegador: así ordenar una columna es instantáneo, igual que
+// en Productos/Stock/Movimientos, y aun así ordena TODAS las páginas.
 const FETCH_PAGE_SIZE = 5000
+
+// Porcentaje mínimo de diferencia, de a 5%. El valor inicial es el 20% de siempre.
+const UMBRAL_INICIAL = 20
+const MARGEN_CERCANO = 5 // los que quedan hasta 5% por debajo se muestran en naranja
+const OPCIONES_UMBRAL = Array.from({ length: 20 }, (_, i) => (i + 1) * 5) // 5, 10, ... 100
 
 export default function ComparacionPrecios() {
   const { usuario, logout } = useAuth()
@@ -24,11 +29,13 @@ export default function ComparacionPrecios() {
   const [cargandoDatos, setCargandoDatos] = useState(true)
   const [page, setPage] = useState(1)
 
-  // El filtro por nombre se resuelve en el backend (con debounce, como en
-  // los otros módulos). El orden y la paginación son locales (ver arriba).
+  // El filtro por nombre y el porcentaje mínimo se resuelven en el backend
+  // (el buscador con debounce, como en los otros módulos). El orden y la
+  // paginación son locales (ver arriba).
   const [busqueda, setBusqueda] = useState('')
   const busquedaDebounced = useDebounce(busqueda, 400)
   const [orden, setOrden] = useState({ columna: 'diferencia_porcentual', direccion: 'desc' })
+  const [umbral, setUmbral] = useState(UMBRAL_INICIAL)
 
   const [estado, setEstado] = useState(null) // { en_progreso, ultima_actualizacion, mensaje, supermercados_ok, supermercados_fallidos }
   const [actualizando, setActualizando] = useState(false)
@@ -57,12 +64,18 @@ export default function ComparacionPrecios() {
   const busquedaRef = useRef('')
   busquedaRef.current = busquedaDebounced.trim()
 
+  // Mismo motivo que busquedaRef: el polling recarga con el porcentaje que
+  // el usuario tiene elegido AHORA, no con el del primer render.
+  const umbralRef = useRef(UMBRAL_INICIAL)
+  umbralRef.current = umbral
+
   const cargarComparacion = async () => {
     const miReq = ++reqId.current
     setCargandoDatos(true)
     try {
       const params = new URLSearchParams({ page: '1', page_size: String(FETCH_PAGE_SIZE) })
       if (busquedaRef.current) params.set('search', busquedaRef.current)
+      params.set('umbral', String(umbralRef.current))
       const res = await fetch(`${API_URL}/precios-competidor/comparacion?${params}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
@@ -148,6 +161,16 @@ export default function ComparacionPrecios() {
     setPage(1)
     cargarComparacion()
   }, [busquedaDebounced])
+
+  // Al cambiar el porcentaje se vuelve a pedir el listado al backend (que es
+  // quien filtra) y se vuelve a la página 1. Misma técnica que el buscador.
+  const umbralPrev = useRef(umbral)
+  useEffect(() => {
+    if (umbralPrev.current === umbral) return
+    umbralPrev.current = umbral
+    setPage(1)
+    cargarComparacion()
+  }, [umbral])
 
   // Ordenar es instantáneo: se hace acá, sobre el listado completo ya
   // cargado. Desempate por id_producto para que el orden sea estable.
@@ -271,18 +294,33 @@ export default function ComparacionPrecios() {
             <div>
               <h3 className="text-lg font-medium text-white mb-1">Productos convenientes en La Anónima</h3>
               <p className="text-xs" style={{ color: '#6b7280' }}>
-                Productos con al menos un 20% de diferencia a favor del supermercado.
+                Productos con al menos un {umbral}% de diferencia a favor del supermercado.
+              </p>
+              <p className="text-xs mt-1" style={{ color: '#fb923c' }}>
+                En naranja: los que quedan hasta {MARGEN_CERCANO}% por debajo.
               </p>
             </div>
             {!comparacion.nunca_ejecutado && (
-              <input
-                type="text"
-                placeholder="Buscar por nombre..."
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
-                className="px-3 py-1.5 rounded-lg text-sm text-white focus:outline-none"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '220px' }}
-              />
+              <div className="flex flex-col sm:flex-row gap-3">
+                <select
+                  value={umbral}
+                  onChange={(e) => setUmbral(Number(e.target.value))}
+                  className="px-3 py-1.5 rounded-lg text-sm text-white focus:outline-none"
+                  style={{ background: '#121218', border: '1px solid rgba(255,255,255,0.1)' }}
+                >
+                  {OPCIONES_UMBRAL.map((v) => (
+                    <option key={v} value={v}>Desde {v}%</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  placeholder="Buscar por nombre..."
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg text-sm text-white focus:outline-none"
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '220px' }}
+                />
+              </div>
             )}
           </div>
 
@@ -300,7 +338,7 @@ export default function ComparacionPrecios() {
               <p className="text-sm" style={{ color: '#9ca3af' }}>
                 {busquedaDebounced.trim()
                   ? 'No se encontraron productos que coincidan con la búsqueda.'
-                  : 'No hay productos con una diferencia de precio significativa (≥20%) por ahora.'}
+                  : `No hay productos con una diferencia de precio significativa (≥${umbral}%) por ahora.`}
               </p>
             </div>
           ) : (
@@ -331,8 +369,14 @@ export default function ComparacionPrecios() {
                       </td>
                       <td className="py-3 px-3 text-xs" style={{ color: '#9ca3af' }}>{item.supermercado}</td>
                       <td className="py-3 px-3">
+                        {/* Verde: llega al porcentaje elegido. Naranja: quedó hasta 5% por debajo.
+                            Se compara con el mismo número que se muestra (1 decimal). */}
                         <span className="text-xs px-2.5 py-1 rounded-full font-bold inline-block"
-                          style={{ background: 'rgba(16,185,129,0.1)', color: '#34d399' }}>
+                          style={
+                            Number(item.diferencia_porcentual.toFixed(1)) < umbral
+                              ? { background: 'rgba(249,115,22,0.1)', color: '#fb923c' }
+                              : { background: 'rgba(16,185,129,0.1)', color: '#34d399' }
+                          }>
                           -{item.diferencia_porcentual.toFixed(1)}%
                         </span>
                       </td>
