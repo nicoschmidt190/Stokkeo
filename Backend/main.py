@@ -9,38 +9,34 @@ import logging
 from database import engine
 from routers import auth, categorias, productos, stock, movimientos, precios_competidor
 
-# Orígenes permitidos: localhost (desarrollo) + FRONTEND_URL (producción),
-# varias URLs separadas por coma. Ej: https://tu-frontend.up.railway.app
-ALLOWED_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
-ALLOWED_ORIGINS += [
-    o.strip().rstrip("/")
-    for o in os.getenv("FRONTEND_URL", "").split(",")
-    if o.strip()
+app = FastAPI()
+
+# 1. Configuración de CORS (¡Debe ir PRIMERO que todo, antes de los routers y middlewares!)
+# Si prefieres evitar problemas con las URLs de Railway, puedes usar allow_origins=["*"]
+# o bien mantener la lectura de la variable de entorno con un fallback amplio:
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://spectacular-bravery-production-8431.up.railway.app",  # Tu frontend actual en Railway
 ]
 
-
-app = FastAPI()
-app.include_router(categorias.router)
-app.include_router(productos.router)
-app.include_router(stock.router)
-app.include_router(movimientos.router)
-app.include_router(precios_competidor.router)
-
-# 1. Configuración de CORS (debe ir antes de los routers y otros middlewares)
+# Si quieres leer dinámicamente desde Railway, puedes agregar FRONTEND_URL en las variables
+frontend_env = os.getenv("FRONTEND_URL")
+if frontend_env:
+    for o in frontend_env.split(","):
+        clean_url = o.strip().rstrip("/")
+        if clean_url and clean_url not in ALLOWED_ORIGINS:
+            ALLOWED_ORIGINS.append(clean_url)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=ALLOWED_ORIGINS,  # O usa allow_origins=["*"] para pruebas libres
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Comprime las respuestas JSON (gzip) antes de mandarlas por la red.
-# Con wifi lento/inestable esto es una de las mejoras de mayor impacto:
-# menos bytes viajando = menos chance de que un paquete se pierda o
-# haya que retransmitir, y la respuesta llega antes aunque el ancho de
-# banda sea chico. minimum_size evita comprimir respuestas ya diminutas.
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 @app.middleware("http")
@@ -51,13 +47,15 @@ async def catch_exceptions(request: Request, call_next):
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
+# Incluir todos los routers después del CORS
+app.include_router(categorias.router)
+app.include_router(productos.router)
+app.include_router(stock.router)
+app.include_router(movimientos.router)
+app.include_router(precios_competidor.router)
 app.include_router(auth.router)
 
-# CU-27: scraping automático "si el sistema está configurado para
-# ejecutarlo en un horario determinado". Corre 1 vez por día a las 3 AM
-# (poco tráfico, y una lectura diaria alcanza y sobra para precios de
-# supermercado). El botón "Actualizar precios" del dashboard sigue
-# funcionando igual para disparar una corrida manual en cualquier momento.
+# CU-27: scraping automático
 scheduler = BackgroundScheduler()
 
 @app.on_event("startup")
