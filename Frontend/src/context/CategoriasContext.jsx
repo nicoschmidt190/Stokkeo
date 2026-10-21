@@ -22,7 +22,7 @@ export function CategoriasProvider({ children }) {
     setCargandoCategorias(true)
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch(`${API_URL}/categorias`, {
+      const res = await fetch(`${API_URL}/categorias/`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
       if (res.ok) {
