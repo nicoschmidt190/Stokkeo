@@ -76,7 +76,7 @@ def startup():
         scraping_estado.marcar_inicio()
         _ejecutar_scraping_en_segundo_plano()
 
-    scheduler.add_job(job_scraping_diario, "cron", hour=3, minute=0, id="scraping_diario")
+    scheduler.add_job(job_scraping_diario, "cron", hour=7, minute=0, id="scraping_diario")
     scheduler.start()
 
 @app.on_event("shutdown")

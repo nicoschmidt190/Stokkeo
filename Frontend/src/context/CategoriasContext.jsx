@@ -13,9 +13,10 @@ export function CategoriasProvider({ children }) {
   const [cargandoCategorias, setCargandoCategorias] = useState(false)
   const yaCargadas = useRef(false)
 
-  // Blindamos la URL para que siempre use HTTPS obligatoriamente
-const rawApiUrl = import.meta.env.VITE_API_URL || 'https://stokkeo-production.up.railway.app';
-const API_URL = rawApiUrl.replace('http://', 'https://');
+  // Blindamos la URL para que en producción siempre use HTTPS, pero sin tocar
+  // la de desarrollo (localhost no tiene HTTPS).
+  const rawApiUrl = import.meta.env.VITE_API_URL || 'https://stokkeo-production.up.railway.app'
+  const API_URL = /localhost|127\.0\.0\.1/.test(rawApiUrl) ? rawApiUrl : rawApiUrl.replace('http://', 'https://')
 
   // forzar=true se usa después de crear/editar/borrar una categoría,
   // para refrescar el cache en vez de esperar a la próxima sesión.

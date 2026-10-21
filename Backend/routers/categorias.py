@@ -13,11 +13,16 @@ router = APIRouter(prefix="/categorias", tags=["categorias"], dependencies=[Depe
 class CategoriaCreate(BaseModel):
     nombre: str
 
-@router.get("/")
+# Se acepta con y sin barra final: así /categorias y /categorias/ responden
+# directo, sin el redirect 307 de FastAPI (que detrás del proxy de Railway
+# redirigía a http:// y el navegador lo bloqueaba).
+@router.get("")
+@router.get("/", include_in_schema=False)
 def listar_categorias(db: Session = Depends(get_db)):
     return db.query(Categoria).order_by(Categoria.nombre).all()
 
-@router.post("/")
+@router.post("")
+@router.post("/", include_in_schema=False)
 def crear_categoria(data: CategoriaCreate, db: Session = Depends(get_db)):
     nombre = data.nombre.strip()
     if not nombre:
