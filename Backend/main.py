@@ -56,7 +56,7 @@ app.include_router(precios_competidor.router)
 app.include_router(auth.router)
 
 # CU-27: scraping automático
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(timezone="America/Argentina/Buenos_Aires")
 
 @app.on_event("startup")
 def startup():
